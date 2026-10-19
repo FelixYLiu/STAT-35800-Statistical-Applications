@@ -1,0 +1,838 @@
+---
+title: "Assignment 1"
+author: "Felix Liu"
+output:
+  pdf_document:
+    latex_engine: xelatex
+    
+knit: (function(inputFile, encoding) { out <- rmarkdown::render(inputFile, encoding = encoding); dest_dir <- file.path(dirname(inputFile), "..", "output"); dir.create(dest_dir, showWarnings = FALSE, recursive = TRUE); dest <- file.path(dest_dir, basename(out)); file.copy(out, dest, overwrite = TRUE); unlink(out); normalizePath(dest, winslash = "/") })
+
+header-includes:
+  - \usepackage{amsmath}
+  - \usepackage{amssymb}
+  - \usepackage{booktabs}
+  - \usepackage{caption}
+  - \usepackage{float}
+  - \usepackage{placeins}
+  - \usepackage{titling}
+  - \setlength{\droptitle}{-1.5cm}
+---
+
+```{r initialize, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+library(lme4)
+library(tidyr)
+
+# Work around TinyTeX same-file copy issue on Windows
+latex_tmp <- normalizePath(
+  tempdir(),
+  winslash = "/",
+  mustWork = TRUE
+)
+
+options(
+  tinytex.output_dir = latex_tmp,
+  tinytex.engine_args = shQuote(
+    paste0("--output-directory=", latex_tmp)
+  )
+)
+```
+
+# Introduction & Exploratory Analysis
+
+This dataset comes from an inter-laboratory calibration study in analytical chemistry. Copper samples with known concentrations were analyzed by seven laboratories for a total of 175 observations. The goal of this analysis is to characterize the overall calibration relationship between known and measured concentration while also accounting for systematic differences among laboratories. 
+
+```{r clean_data}
+dat <- read.csv("../data/data.csv")
+names(dat) <- trimws(names(dat))
+
+dat <- dat[, colSums(!is.na(dat)) > 0]
+
+dat$lab <- factor(dat$lab)
+```
+
+```{r create-summary-tables}
+summary_table <- dat %>%
+  group_by(conc) %>%
+  summarise(
+    n = n(),
+    mean_measured = mean(measured),
+    sd_measured = sd(measured),
+    se_measured = sd(measured) / sqrt(n()),
+    bias = mean(measured - conc)
+  )
+lab_summary <- dat %>%
+  mutate(error = measured - conc) %>%
+  group_by(lab) %>%
+  summarise(
+    n = n(),
+    mean_error = mean(error),
+    rmse = sqrt(mean(error^2)),
+    .groups = "drop"
+  )
+```
+
+```{r summary-tables, results='asis'}
+cat("\\begin{center}\n")
+
+cat("\\begin{minipage}[t]{0.62\\textwidth}\n")
+cat("\\centering\n")
+cat("\\scriptsize\n")
+cat("\\captionof{table}{Summary by Known Concentration}\n")
+
+cat(
+  kable(
+    summary_table,
+    format = "latex",
+    booktabs = TRUE,
+    digits = 2,
+    col.names = c(
+      "Conc.",
+      "$n$",
+      "Mean",
+      "SD",
+      "SE",
+      "Bias"
+    ),
+    escape = FALSE
+  )
+)
+
+cat("\n\\end{minipage}\n")
+cat("\\hfill\n")
+
+cat("\\begin{minipage}[t]{0.34\\textwidth}\n")
+cat("\\centering\n")
+cat("\\scriptsize\n")
+cat("\\captionof{table}{Summary by Laboratory}\n")
+
+cat(
+  kable(
+    lab_summary,
+    format = "latex",
+    booktabs = TRUE,
+    digits = 2,
+    col.names = c(
+      "Lab",
+      "$n$",
+      "Mean Error",
+      "RMSE"
+    ),
+    escape = FALSE
+  )
+)
+
+cat("\n\\end{minipage}\n")
+
+cat("\\end{center}\n")
+```
+
+The concentration-level summaries show that measured concentration generally tracks the known concentration, but the direction and magnitude of bias change across the concentration range. At the lower concentrations, the measurements tend to be slightly higher than the true values in absolute terms. At the higher concentrations, measurements are slightly low at 50 $\mu$g/L and more noticeably low at 200 $\mu$g/L. 
+
+The laboratory-level summaries show additional differences in average measurement error and RMSE across laboratories. Because each laboratory contributes repeated measurements across all five concentration levels, observations within a laboratory are naturally clustered and may share systematic calibration differences. This motivates the use of a mixed-effects model, with laboratory treated as the clustering variable. 
+
+```{r spaghetti-plot, fig.width=8, fig.height=4, out.width='85%', fig.align='center', fig.pos='H'}
+ggplot(
+  dat,
+  aes(
+    x = conc,
+    y = measured,
+    group = rep
+  )
+) +
+  geom_line(alpha = 0.6) +
+  geom_point(size = 1.3) +
+  geom_abline(
+    intercept = 0,
+    slope = 1,
+    linetype = "dashed"
+  ) +
+  facet_wrap(~ lab, ncol = 4) +
+  labs(
+    x = "Known Concentration (µg/L)",
+    y = "Measured Concentration (µg/L)"
+  ) +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(face = "bold")
+  )
+```
+The plot shows a strong positive relationship between known and measured concentration across all laboratories, consistent with an approximately linear calibration relationship. At the same time, the laboratory-specific patterns do not overlap perfectly. These patterns provide graphical evidence that laboratory-specific effects should be considered rather than relying only on a single pooled regression line. 
+
+# Global OLS
+I first fit a global OLS using measured concentration as the response and true concentration as the predictor, while ignoring laboratory-specific differences. The model is
+
+$$
+Y_{ij} = \beta_0 + \beta_1 X_{ij} + \varepsilon_{ij},
+$$
+
+where $Y_{ij}$ is the measured concentration, $X_{ij}$ is the known concentration, and $\varepsilon_{ij}$ is the residual error. 
+
+```{r OLS}
+global_ols <- lm(measured ~ conc, data = dat)
+
+ols_coef <- coef(summary(global_ols))
+ols_ci <- confint(global_ols)
+
+# Coefficient table
+ols_coef_table <- data.frame(
+  Term = c(
+    "Intercept",
+    "True concentration"
+  ),
+  Estimate = c(
+    ols_coef["(Intercept)", "Estimate"],
+    ols_coef["conc", "Estimate"]
+  ),
+  SE = c(
+    ols_coef["(Intercept)", "Std. Error"],
+    ols_coef["conc", "Std. Error"]
+  ),
+  CI = c(
+    sprintf(
+      "[%.3f, %.3f]",
+      ols_ci["(Intercept)", 1],
+      ols_ci["(Intercept)", 2]
+    ),
+    sprintf(
+      "[%.3f, %.3f]",
+      ols_ci["conc", 1],
+      ols_ci["conc", 2]
+    )
+  ),
+  p_value = c(
+    sprintf(
+      "%.3f",
+      ols_coef["(Intercept)", "Pr(>|t|)"]
+    ),
+    "<0.001"
+  )
+)
+
+# Model-fit table
+ols_fit_table <- data.frame(
+  Metric = c(
+    "R-squared",
+    "Residual SD",
+    "AIC",
+    "BIC"
+  ),
+  Value = c(
+    summary(global_ols)$r.squared,
+    summary(global_ols)$sigma,
+    AIC(global_ols),
+    BIC(global_ols)
+  )
+)
+```
+
+```{r OLS-tables, results='asis'}
+cat("\\begin{center}\n")
+
+# Left: coefficient estimates
+cat("\\begin{minipage}[t]{0.62\\textwidth}\n")
+cat("\\centering\n")
+cat("\\scriptsize\n")
+cat("\\captionof{table}{Global OLS Coefficient Estimates}\n")
+
+cat(
+  kable(
+    ols_coef_table,
+    format = "latex",
+    booktabs = TRUE,
+    digits = 3,
+    col.names = c(
+      "Term",
+      "Estimate",
+      "SE",
+      "95\\% CI",
+      "$p$-value"
+    ),
+    escape = FALSE
+  )
+)
+
+cat("\n\\end{minipage}\n")
+cat("\\hfill\n")
+
+# Right: model fit
+cat("\\begin{minipage}[t]{0.32\\textwidth}\n")
+cat("\\centering\n")
+cat("\\scriptsize\n")
+cat("\\captionof{table}{Global OLS Model Fit}\n")
+
+cat(
+  kable(
+    ols_fit_table,
+    format = "latex",
+    booktabs = TRUE,
+    digits = 3,
+    col.names = c(
+      "Metric",
+      "Value"
+    )
+  )
+)
+
+cat("\n\\end{minipage}\n")
+
+cat("\\end{center}\n")
+```
+For a perfectly calibrated measurement process, the expected relationship would be an intercept of 0 and a slope of 1. The estimated slope is below 1, with a 95\% confidence interval of approximately 0.946 to 0.970. This is consistent with the pattern observed in the descriptive summaries: measurements are relatively close to the true values at lower concentrations but tend to increasingly underestimate concentration toward the upper end of the calibration range. 
+
+However, the global model assumes that all 175 observations are independent and that all seven laboratories follow the same calibration curve. The global OLS model therefore provides a useful description of the overall mean trend, but it does not account for the hierarchical structure of the data. 
+
+# Mixed-Effect Linear Regression
+In this setting, level 1 represents the individual concentration measurements within a laboratory, while level 2 represents the seven laboratories.
+
+## Random-Intercept Model
+
+I first fit a random-intercept model, which allows each laboratory to have its own baseline calibration level while assuming that the effect of true concentration is the same across laboratories. The model is 
+
+$$
+Y_{ij} = b_{0j} + \beta_1 X_{ij} + \epsilon_{ij}, \qquad b_{0j} = \beta_0 + \nu_{0j}, \quad \nu_{0j} \sim N(0,\tau_0^2), \quad \epsilon_{ij} | \nu_{0j} \sim N(0, \sigma^2)
+$$
+where $\nu_{0j}$ represents laboratory deviation from the overall intercept and $\epsilon_{ij}$ represents within-laboratory variation.
+
+```{r random intercept}
+ri_model <- lmer(
+  measured ~ conc + (1 | lab),
+  data = dat,
+  REML = FALSE
+)
+ri_coef <- coef(summary(ri_model))
+ri_fixed <- data.frame(
+  Term = c("Intercept", "True concentration"),
+  Estimate = ri_coef[, "Estimate"],
+  SE = ri_coef[, "Std. Error"]
+)
+
+ri_var <- as.data.frame(VarCorr(ri_model))
+
+ri_random <- data.frame(
+  Component = c("Lab intercept SD", "Residual SD"),
+  SD = c(
+    ri_var$sdcor[ri_var$grp == "lab"],
+    sigma(ri_model)
+  )
+)
+```
+
+```{r random-intercept-tables, results='asis'}
+cat("\\begin{center}\n")
+
+cat("\\begin{minipage}[t]{0.48\\textwidth}\n")
+cat("\\centering\n")
+cat("\\scriptsize\n")
+cat("\\captionof{table}{Fixed Effects for the Random-Intercept Model}\n")
+
+cat(
+  kable(
+    ri_fixed,
+    format = "latex",
+    booktabs = TRUE,
+    digits = 3,
+    col.names = c(
+      "Fixed Effect",
+      "Estimate",
+      "SE"
+    )
+  )
+)
+
+cat("\n\\end{minipage}\n")
+cat("\\hfill\n")
+
+cat("\\begin{minipage}[t]{0.48\\textwidth}\n")
+cat("\\centering\n")
+cat("\\scriptsize\n")
+cat("\\captionof{table}{Variance Components for the Random-Intercept Model}\n")
+
+cat(
+  kable(
+    ri_random,
+    format = "latex",
+    booktabs = TRUE,
+    digits = 3,
+    col.names = c(
+      "Variance Component",
+      "SD"
+    )
+  )
+)
+
+cat("\n\\end{minipage}\n")
+
+cat("\\end{center}\n")
+```
+
+The fixed-effect estimates are nearly unchanged from the global OLS model. The main difference is in how the variability is represented. In the random-intercept model, this variation is separated into between-laboratory and within-laboratory components rather than represented as a total variance term. The estimated random-intercept standard deviation is `r round(ri_random$SD[1], 3)` $\mu$g/L, corresponding to $\hat{\tau}_0^2 \approx `r round(ri_random$SD[1]^2, 3)`$, while the residual standard deviation decreases to `r round(sigma(ri_model), 3)` $\mu$g/L, corresponding to $\hat{\sigma}^2 \approx `r round(sigma(ri_model)^2, 3)`$. This suggests that part of the variation treated as residual error by the global OLS model is attributable to systematic differences among laboratories.
+
+## Random-Intercept and Random-Slope Model
+The exploratory plot suggests that laboratories may differ not only in their baseline measurement levels but also in how measured concentration changes with true concentration. Then, the new model is 
+
+$$
+Y_{ij} = b_{0j} + b_{1j}X_{ij} + \epsilon_{ij},
+$$
+with level-2 equations
+$$
+b_{0j} = \beta_0 + \nu_{0j},  \qquad  b_{1j} = \beta_1 + \nu_{1j}.
+$$
+
+Two separate versions are considered. In the first, the laboratory-specific random intercept and random slope are allowed to be correlated. In the second, they are assumed to be uncorrelated, so that
+$$
+\operatorname{Cov}(\nu_{0j},\nu_{1j}) = 0.
+$$
+
+```{r random intercept and slope}
+ris_model <- lmer(
+  measured ~ conc + (1 + conc | lab),
+  data = dat,
+  REML = FALSE,
+  control = lmerControl(optimizer = "bobyqa")
+)
+
+ris_uncor_model <- lmer(
+  measured ~ conc + (1 | lab) + (0 + conc | lab),
+  data = dat,
+  REML = FALSE
+)
+
+ris_coef <- coef(summary(ris_model))
+
+ris_fixed <- data.frame(
+  Term = c("Intercept", "True concentration"),
+  Estimate = ris_coef[, "Estimate"],
+  SE = ris_coef[, "Std. Error"]
+)
+
+ris_vc <- as.data.frame(VarCorr(ris_model))
+
+intercept_sd <- ris_vc$sdcor[
+  ris_vc$grp == "lab" &
+  ris_vc$var1 == "(Intercept)" &
+  is.na(ris_vc$var2)
+]
+
+slope_sd <- ris_vc$sdcor[
+  ris_vc$grp == "lab" &
+  ris_vc$var1 == "conc" &
+  is.na(ris_vc$var2)
+]
+
+intercept_slope_cor <- ris_vc$sdcor[
+  ris_vc$grp == "lab" &
+  !is.na(ris_vc$var2)
+]
+
+ris_random <- data.frame(
+  Component = c(
+    "Lab intercept SD",
+    "Lab slope SD",
+    "Intercept-slope correlation",
+    "Residual SD"
+  ),
+  Estimate = c(
+    intercept_sd,
+    slope_sd,
+    intercept_slope_cor,
+    sigma(ris_model)
+  )
+)
+```
+
+```{r random-slope-tables, results='asis'}
+cat("\\begin{center}\n")
+
+cat("\\begin{minipage}[t]{0.46\\textwidth}\n")
+cat("\\centering\n")
+cat("\\scriptsize\n")
+cat("\\captionof{table}{Fixed Effects for the Correlated Random-Intercept and Random-Slope Model}\n")
+
+cat(
+  kable(
+    ris_fixed,
+    format = "latex",
+    booktabs = TRUE,
+    digits = 3,
+    col.names = c(
+      "Fixed Effect",
+      "Estimate",
+      "SE"
+    )
+  )
+)
+
+cat("\n\\end{minipage}\n")
+cat("\\hfill\n")
+
+cat("\\begin{minipage}[t]{0.50\\textwidth}\n")
+cat("\\centering\n")
+cat("\\scriptsize\n")
+cat("\\captionof{table}{Variance Components for the Correlated Random-Intercept and Random-Slope Model}\n")
+
+cat(
+  kable(
+    ris_random,
+    format = "latex",
+    booktabs = TRUE,
+    digits = 3,
+    col.names = c(
+      "Random-Effect Component",
+      "Estimate"
+    )
+  )
+)
+
+cat("\n\\end{minipage}\n")
+
+cat("\\end{center}\n")
+```
+
+It is important to note that the estimated intercept-slope correlation is `r round(intercept_slope_cor, 3)`. This results in a singular fit, suggesting that the data do not reliably support estimating the correlation structure between the two effects. 
+
+# Model Selection
+
+## Random-Effect Structure
+
+To determine the appropriate random-effect structure, I compared the
+random-intercept model with random-intercept and random-slope models
+in which the random effects were either correlated or uncorrelated.
+
+```{r compare-random-effects}
+random_comparison <- data.frame(
+  Model = c(
+    "Random intercept",
+    "RI + slope, uncorrelated",
+    "RI + slope, correlated"
+  ),
+  Parameters = c(
+    attr(logLik(ri_model), "df"),
+    attr(logLik(ris_uncor_model), "df"),
+    attr(logLik(ris_model), "df")
+  ),
+  AIC = c(
+    AIC(ri_model),
+    AIC(ris_uncor_model),
+    AIC(ris_model)
+  ),
+  BIC = c(
+    BIC(ri_model),
+    BIC(ris_uncor_model),
+    BIC(ris_model)
+  ),
+  LogLik = c(
+    as.numeric(logLik(ri_model)),
+    as.numeric(logLik(ris_uncor_model)),
+    as.numeric(logLik(ris_model))
+  ),
+  Singular = c(
+    isSingular(ri_model),
+    isSingular(ris_uncor_model),
+    isSingular(ris_model)
+  )
+)
+
+kable(
+  random_comparison,
+  format = "latex",
+  booktabs = TRUE,
+  digits = 2,
+  col.names = c(
+    "Model",
+    "Parameters",
+    "AIC",
+    "BIC",
+    "Log-Likelihood",
+    "Singular"
+  ),
+  caption = "Comparison of Random-Effect Structures"
+) %>%
+  kable_styling(
+    latex_options = "hold_position",
+    position = "center"
+  )
+```
+
+```{r random-effect-lrt, include=FALSE}
+random_lrt <- anova(ri_model, ris_model)
+
+random_chisq <- random_lrt$Chisq[2]
+random_df <- random_lrt$`Chi Df`[2]
+random_p <- random_lrt$`Pr(>Chisq)`[2]
+random_df <- random_lrt$Df[2]
+```
+
+Allowing laboratory-specific slopes improves model fit
+relative to the random-intercept-only model. The uncorrelated
+model has the lowest BIC and is non-singular, whereas the correlated model produces a singular fit.
+
+
+## Linear vs Quadratic Mixed Effect Regressions
+
+Now, we explore whether the population-average calibration
+relationship is linear or should include a quadratic term. The
+quadratic model is
+
+$$
+Y_{ij} = b_{0j} + b_{1j}X_{ij} + \beta_2X_{ij}^{2} + \epsilon_{ij}, \qquad b_{0j} = \beta_0 + \nu_{0j}, \quad b_{1j} = \beta_1 + \nu_{1j},
+$$
+where $\beta_2$ represents curvature in the population-average calibration relationship. The model here assumes the quadratic term is constant across laboratories. 
+```{r quadratic}
+quad_model <- lmer(
+  measured ~ conc + I(conc^2) +
+    (1 | lab) + (0 + conc | lab),
+  data = dat,
+  REML = FALSE
+)
+
+quad_coef <- coef(summary(quad_model))
+
+quad_fixed <- data.frame(
+  Term = c(
+    "Intercept",
+    "Concentration",
+    "Concentration squared"
+  ),
+  Estimate = quad_coef[, "Estimate"],
+  SE = quad_coef[, "Std. Error"]
+)
+```
+
+```{r comparison linear quadratic}
+functional_form_comparison <- data.frame(
+  Model = c(
+    "Linear",
+    "Quadratic"
+  ),
+  Parameters = c(
+    attr(logLik(ris_uncor_model), "df"),
+    attr(logLik(quad_model), "df")
+  ),
+  AIC = c(
+    AIC(ris_uncor_model),
+    AIC(quad_model)
+  ),
+  BIC = c(
+    BIC(ris_uncor_model),
+    BIC(quad_model)
+  ),
+  LogLik = c(
+    as.numeric(logLik(ris_uncor_model)),
+    as.numeric(logLik(quad_model))
+  )
+)
+```
+
+```{r quadratic-tables, results='asis'}
+cat("\\begin{center}\n")
+
+# Left table
+cat("\\begin{minipage}[t]{0.38\\textwidth}\n")
+cat("\\centering\n")
+cat("\\scriptsize\n")
+cat("\\captionof{table}{Quadratic Fixed Effects}\n")
+
+cat(
+  kable(
+    quad_fixed,
+    format = "latex",
+    booktabs = TRUE,
+    digits = 4,
+    col.names = c(
+      "Fixed Effect",
+      "Estimate",
+      "SE"
+    )
+  )
+)
+
+cat("\n\\end{minipage}\n")
+
+# Explicit gap between tables
+cat("\\hspace{0.05\\textwidth}\n")
+
+# Right table
+cat("\\begin{minipage}[t]{0.52\\textwidth}\n")
+cat("\\centering\n")
+cat("\\scriptsize\n")
+cat("\\captionof{table}{Linear vs. Quadratic Comparison}\n")
+
+cat(
+  kable(
+    functional_form_comparison,
+    format = "latex",
+    booktabs = TRUE,
+    digits = 2,
+    col.names = c(
+      "Model",
+      "Params.",
+      "AIC",
+      "BIC",
+      "LogLik"
+    )
+  )
+)
+
+cat("\n\\end{minipage}\n")
+
+cat("\\end{center}\n")
+```
+
+```{r likelihood-ratio comparison}
+quad_lrt <- anova(ris_uncor_model, quad_model)
+
+quad_chisq <- quad_lrt$Chisq[2]
+quad_df <- quad_lrt$`Chi Df`[2]
+quad_p <- quad_lrt$`Pr(>Chisq)`[2]
+```
+
+The estimated quadratic coefficient is essentially zero, indicating that there is little evidence of curvature in the calibration relationship. This conclusion is also supported by the model-fit statistics. The linear uncorrelated random-intercept and random-slope model has a lower AIC and lower BIC than the quadratic model. Therefore, the simpler linear uncorrelated random-intercept and random-slope model is preferred. The likelihood-ratio test also provides no evidence that the quadratic term improves fit ($p = 0.752$).
+
+# Final (Selected) Model
+The model-selection results support a linear mixed-effects model with laboratory-specific random intercepts and random slopes, with the two random effects assumed to be uncorrelated. The final model is
+
+$$
+Y_{ij} = \beta_0 + \beta_1X_{ij} + \nu_{0j} + \nu_{1j}X_{ij} + \epsilon_{ij}, \qquad \nu_{0j}\sim N(0,\tau_0^2), \quad \nu_{1j}\sim N(0,\tau_1^2), \quad \operatorname{Cov}(\nu_{0j},\nu_{1j})=0, \quad \epsilon_{ij}\sim N(0,\sigma^2).
+$$
+
+```{r final-model-table}
+final_vc <- as.data.frame(VarCorr(ris_uncor_model))
+
+final_intercept_sd <- final_vc$sdcor[
+  !is.na(final_vc$var1) &
+  final_vc$var1 == "(Intercept)" &
+  is.na(final_vc$var2)
+]
+
+final_slope_sd <- final_vc$sdcor[
+  !is.na(final_vc$var1) &
+  final_vc$var1 == "conc" &
+  is.na(final_vc$var2)
+]
+
+final_model_table <- data.frame(
+  Component = c(
+    "Population intercept",
+    "Population slope",
+    "Random-intercept SD",
+    "Random-slope SD",
+    "Residual SD"
+  ),
+  Symbol = c(
+    "$\\hat{\\beta}_0$",
+    "$\\hat{\\beta}_1$",
+    "$\\hat{\\tau}_0$",
+    "$\\hat{\\tau}_1$",
+    "$\\hat{\\sigma}$"
+  ),
+  Estimate = c(
+    fixef(ris_uncor_model)["(Intercept)"],
+    fixef(ris_uncor_model)["conc"],
+    final_intercept_sd,
+    final_slope_sd,
+    sigma(ris_uncor_model)
+  ),
+  Variance = c(
+    "-",
+    "-",
+    round(final_intercept_sd^2,4),
+    round(final_slope_sd^2,4),
+    round(sigma(ris_uncor_model)^2,4)
+  )
+)
+
+kable(
+  final_model_table,
+  format = "latex",
+  booktabs = TRUE,
+  digits = 3,
+  col.names = c(
+    "Component",
+    "Parameter",
+    "Estimate",
+    "Variance"
+  ),
+  caption = "Parameter Estimates for the Final Selected Model",
+  escape = FALSE,
+  na = "---"
+) %>%
+  kable_styling(
+    latex_options = "hold_position",
+    position = "center"
+  )
+```
+
+```{r fitted-calibration-curves, fig.width=7, fig.height=4, out.width='75%', fig.align='center'}
+
+prediction_grid <- expand.grid(
+  conc = seq(
+    min(dat$conc),
+    max(dat$conc),
+    length.out = 200
+  ),
+  lab = levels(dat$lab)
+)
+
+prediction_grid$lab <- factor(
+  prediction_grid$lab,
+  levels = levels(dat$lab)
+)
+
+prediction_grid$predicted <- predict(
+  ris_uncor_model,
+  newdata = prediction_grid,
+  re.form = NULL
+)
+
+lab_means <- dat %>%
+  group_by(lab, conc) %>%
+  summarise(
+    mean_measured = mean(measured),
+    .groups = "drop"
+  )
+
+calibration_plot <- ggplot(
+  prediction_grid,
+  aes(
+    x = conc,
+    y = predicted,
+    color = lab,
+    group = lab
+  )
+) +
+  geom_line(linewidth = 0.9) +
+  geom_point(
+    data = lab_means,
+    aes(
+      x = conc,
+      y = mean_measured,
+      color = lab
+    ),
+    size = 1.8
+  ) +
+  geom_abline(
+    intercept = 0,
+    slope = 1,
+    linetype = "dashed",
+    color = "black"
+  ) +
+  labs(
+    x = "Known Concentration (µg/L)",
+    y = "Measured Concentration (µg/L)",
+    color = "Laboratory"
+  ) +
+  theme_minimal()
+
+print(calibration_plot)
+```
+The fitted laboratory-specific calibration curves show that the laboratories follow the same general linear relationship but differ in their slopes. The dashed line represents perfect calibration. Overall, the final mixed-effects model captures both the strong common calibration trend and the systematic heterogeneity across laboratories.

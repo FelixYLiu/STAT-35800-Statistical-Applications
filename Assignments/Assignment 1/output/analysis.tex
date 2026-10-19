@@ -1,0 +1,559 @@
+% Options for packages loaded elsewhere
+\PassOptionsToPackage{unicode}{hyperref}
+\PassOptionsToPackage{hyphens}{url}
+\documentclass[
+]{article}
+\usepackage{xcolor}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\setcounter{secnumdepth}{-\maxdimen} % remove section numbering
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{textcomp} % provide euro and other symbols
+\else % if luatex or xetex
+  \usepackage{unicode-math} % this also loads fontspec
+  \defaultfontfeatures{Scale=MatchLowercase}
+  \defaultfontfeatures[\rmfamily]{Ligatures=TeX,Scale=1}
+\fi
+\usepackage{lmodern}
+\ifPDFTeX\else
+  % xetex/luatex font selection
+\fi
+% Use upquote if available, for straight quotes in verbatim environments
+\IfFileExists{upquote.sty}{\usepackage{upquote}}{}
+\IfFileExists{microtype.sty}{% use microtype if available
+  \usepackage[]{microtype}
+  \UseMicrotypeSet[protrusion]{basicmath} % disable protrusion for tt fonts
+}{}
+\makeatletter
+\@ifundefined{KOMAClassName}{% if non-KOMA class
+  \IfFileExists{parskip.sty}{%
+    \usepackage{parskip}
+  }{% else
+    \setlength{\parindent}{0pt}
+    \setlength{\parskip}{6pt plus 2pt minus 1pt}}
+}{% if KOMA class
+  \KOMAoptions{parskip=half}}
+\makeatother
+\usepackage{graphicx}
+\makeatletter
+\newsavebox\pandoc@box
+\newcommand*\pandocbounded[1]{% scales image to fit in text height/width
+  \sbox\pandoc@box{#1}%
+  \Gscale@div\@tempa{\textheight}{\dimexpr\ht\pandoc@box+\dp\pandoc@box\relax}%
+  \Gscale@div\@tempb{\linewidth}{\wd\pandoc@box}%
+  \ifdim\@tempb\p@<\@tempa\p@\let\@tempa\@tempb\fi% select the smaller of both
+  \ifdim\@tempa\p@<\p@\scalebox{\@tempa}{\usebox\pandoc@box}%
+  \else\usebox{\pandoc@box}%
+  \fi%
+}
+% Set default figure placement to htbp
+\def\fps@figure{htbp}
+\makeatother
+\setlength{\emergencystretch}{3em} % prevent overfull lines
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{float}
+\usepackage{placeins}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{wrapfig}
+\usepackage{float}
+\usepackage{colortbl}
+\usepackage{pdflscape}
+\usepackage{tabularx}
+\usepackage{xltabular}
+\usepackage{threeparttable}
+\usepackage{threeparttablex}
+\usepackage[normalem]{ulem}
+\usepackage{makecell}
+\usepackage{xcolor}
+\usepackage{bookmark}
+\IfFileExists{xurl.sty}{\usepackage{xurl}}{} % add URL line breaks if available
+\urlstyle{same}
+% fallback for those not using the hyperref driver hyperxmp:
+\makeatletter
+\@ifundefined{xmpquote}{\newcommand{\xmpquote}[1]{#1}}{}
+\makeatother
+\hypersetup{
+  pdftitle={Assignment 1},
+  pdfauthor={Felix Liu},
+  hidelinks,
+  pdfcreator={LaTeX via pandoc}}
+
+\title{Assignment 1}
+\author{Felix Liu}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section{Introduction}\label{introduction}
+
+This dataset comes from an inter-laboratory calibration study in
+analytical chemistry. Copper samples with known concentrations of 0, 2,
+10, 50, and 200 \(\mu\)g/L were analyzed by seven laboratories, with
+five replicate measurements obtained at each concentration in each
+laboratory, for a total of 175 observations. The measured concentration
+is the response variable, while the known concentration is the primary
+predictor.
+
+The goal of this analysis is to characterize the overall calibration
+relationship between known and measured concentration while also
+accounting for systematic differences among laboratories. I first
+examine the data graphically and summarize both the overall measurement
+behavior and laboratory-specific deviations. I then compare a global
+ordinary least squares model with several linear mixed-effects models
+that allow laboratories to differ in their intercepts, slopes, or both.
+I also evaluate whether a quadratic calibration curve provides a
+meaningful improvement over a linear specification. The final model is
+selected based on model fit, parsimony, and the extent to which it
+captures both the overall concentration-response relationship and
+between-laboratory heterogeneity.
+
+\section{Exploratory Analysis}\label{exploratory-analysis}
+
+\begin{center}
+\begin{minipage}[t]{0.62\textwidth}
+\centering
+\scriptsize
+\captionof{table}{Summary by Known Concentration}
+
+\begin{tabular}{rrrrrr}
+\toprule
+Conc. & $n$ & Mean & SD & SE & Bias\\
+\midrule
+0 & 35 & 1.23 & 2.92 & 0.49 & 1.23\\
+2 & 35 & 3.23 & 2.36 & 0.40 & 1.23\\
+10 & 35 & 10.37 & 2.26 & 0.38 & 0.37\\
+50 & 35 & 48.79 & 4.87 & 0.82 & -1.21\\
+200 & 35 & 192.72 & 12.21 & 2.06 & -7.28\\
+\bottomrule
+\end{tabular}
+\end{minipage}
+\hfill
+\begin{minipage}[t]{0.34\textwidth}
+\centering
+\scriptsize
+\captionof{table}{Summary by Laboratory}
+
+\begin{tabular}{lrrr}
+\toprule
+Lab & $n$ & Mean Error & RMSE\\
+\midrule
+1 & 25 & 1.72 & 4.51\\
+2 & 25 & 2.06 & 5.00\\
+3 & 25 & -4.48 & 9.24\\
+4 & 25 & 0.84 & 4.18\\
+5 & 25 & -0.61 & 4.13\\
+\addlinespace
+6 & 25 & -1.35 & 7.83\\
+7 & 25 & -6.11 & 10.74\\
+\bottomrule
+\end{tabular}
+\end{minipage}
+\end{center}
+
+The concentration-level summaries show that measured concentration
+generally tracks the known concentration, but the direction and
+magnitude of bias change across the concentration range. At the lower
+concentrations, the measurements tend to be slightly higher than the
+true values in absolute terms. This is especially noticeable at 2
+\(\mu\)g/L, where the absolute bias is only about 1.2 \(\mu\)g/L but
+represents a relatively large error compared with the true
+concentration. At 10 \(\mu\)g/L, the average measurement is very close
+to the known value. At the higher concentrations, the direction of bias
+reverses: measurements are slightly low at 50 \(\mu\)g/L and more
+noticeably low at 200 \(\mu\)g/L, suggesting some underestimation at the
+upper end of the calibration range.
+
+The standard deviation also increases substantially at higher
+concentrations, indicating greater variability in the individual
+measurements as concentration increases. However, because each
+concentration level contains 35 observations, the standard errors of the
+mean remain considerably smaller than the corresponding standard
+deviations. Thus, the mean response at each concentration is estimated
+reasonably precisely even though individual measurements become more
+variable at higher concentrations.
+
+The laboratory-level summaries show additional differences in average
+measurement error and RMSE across laboratories. Because each laboratory
+contributes repeated measurements across all five concentration levels,
+observations within a laboratory are naturally clustered and may share
+systematic calibration differences. This motivates the use of a
+mixed-effects model, with laboratory treated as the clustering variable.
+The subsequent analysis considers whether laboratories differ mainly in
+their baseline measurement level, in their response to increasing true
+concentration, or in both.
+
+\begin{center}\includegraphics[width=0.7\linewidth]{C:\Users\felix\OneDrive\Desktop\R Code\STAT 35800 Statistical Applications\Assignment 1\output\analysis_files/figure-latex/init_plot_by_lab-1} \end{center}
+
+\begin{center}\includegraphics[width=0.85\linewidth]{C:\Users\felix\OneDrive\Desktop\R Code\STAT 35800 Statistical Applications\Assignment 1\output\analysis_files/figure-latex/spaghetti-plot-1} \end{center}
+
+The plot shows a strong positive relationship between known and measured
+concentration across all laboratories, consistent with an approximately
+linear calibration relationship. At the same time, the
+laboratory-specific patterns do not overlap perfectly. Some laboratories
+appear to measure systematically above or below others, and the
+separation among laboratories may also change as the true concentration
+increases.
+
+These patterns provide graphical evidence that laboratory-specific
+effects should be considered rather than relying only on a single pooled
+regression line. However, the plot alone does not determine the
+appropriate random-effect structure. I therefore compare models with
+different combinations of random intercepts and random slopes and
+evaluate whether the additional complexity improves model fit. I also
+compare linear and quadratic specifications to assess whether curvature
+in the calibration relationship is substantial enough to justify
+including a quadratic term.
+
+\section{Global OLS}\label{global-ols}
+
+As a baseline, I first fit a global ordinary least squares regression
+using measured concentration as the response and true concentration as
+the predictor, while ignoring laboratory-specific differences. The model
+is
+
+\[
+Y_{ij} = \beta_0 + \beta_1 X_{ij} + \varepsilon_{ij},
+\]
+
+where \(Y_{ij}\) is the measured concentration, \(X_{ij}\) is the known
+concentration, and \(\varepsilon_{ij}\) is the residual error. Under
+this model, all laboratories share the same intercept and slope.
+
+\begin{table}[!h]
+\centering
+\caption{\label{tab:OLS}Global OLS Regression Estimates}
+\centering
+\begin{tabular}[t]{llrrrrr}
+\toprule
+  & Term & Estimate & SE & 95\% CI Lower & 95\% CI Upper & $p$-value\\
+\midrule
+(Intercept) & Intercept & 1.071 & 0.564 & -0.043 & 2.185 & 0.059\\
+conc & True concentration & 0.958 & 0.006 & 0.946 & 0.970 & 0.000\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The fitted calibration equation is \[
+1.071 + 0.958(\text{True Concentration}).
+\]
+
+The estimated intercept of 1.071 \(\mu\)g/L represents the predicted
+measured concentration when the true concentration is zero. Its 95\%
+confidence interval includes zero, so the data do not provide strong
+evidence that the intercept differs from zero. The estimated slope is
+0.958, meaning that, on average, a 1 \(\mu\)g/L increase in true
+concentration is associated with an approximately 0.958 \(\mu\)g/L
+increase in measured concentration.
+
+For a perfectly calibrated measurement process, the expected
+relationship would be an intercept of 0 and a slope of 1. The estimated
+slope is below 1, with a 95\% confidence interval of approximately 0.946
+to 0.970. This is consistent with the pattern observed in the
+descriptive summaries: measurements are relatively close to the true
+values at lower concentrations but tend to increasingly underestimate
+concentration toward the upper end of the calibration range. The
+positive estimated intercept partially offsets this effect at low
+concentrations.
+
+\begin{table}[!h]
+\centering
+\caption{\label{tab:OLS summary}Global OLS Model Fit}
+\centering
+\begin{tabular}[t]{rrrrr}
+\toprule
+R.squared & Adjusted.R.squared & Residual.SD & AIC & BIC\\
+\midrule
+0.993 & 0.993 & 6.146 & 1136.15 & 1145.644\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The global OLS model explains approximately 99.3\% of the variation in
+measured concentration, reflecting the very strong overall relationship
+between true and measured concentration. However, this high (\(R^2\))
+should not by itself be taken as evidence that the pooled OLS model is
+adequate. Much of the variation in the data is naturally explained by
+the large differences among the five true concentration levels.
+
+More importantly, the global model assumes that all 175 observations are
+independent and that all seven laboratories follow the same calibration
+curve. The exploratory summaries and plots indicate systematic
+differences among laboratories, while measurements collected within the
+same laboratory are likely to be more similar than measurements from
+different laboratories. The global OLS model therefore provides a useful
+description of the overall mean trend, but it does not account for the
+hierarchical structure of the data. This motivates the mixed-effects
+models considered in the next section.
+
+\section{Mixed-Effect Linear
+Regression}\label{mixed-effect-linear-regression}
+
+The global OLS model assumes that all observations follow the same
+calibration curve and are independent. However, the measurements are
+clustered within laboratories, and the exploratory analysis suggests
+systematic differences among laboratories. I therefore fit linear
+mixed-effects models that retain a common population-level relationship
+between true and measured concentration while allowing individual
+laboratories to deviate from that relationship.
+
+In this setting, level 1 represents the individual concentration
+measurements within a laboratory, while level 2 represents the seven
+laboratories.
+
+\subsection{Random-Intercept Model}\label{random-intercept-model}
+
+I first fit a random-intercept model, which allows each laboratory to
+have its own baseline calibration level while assuming that the effect
+of true concentration is the same across laboratories. The model can be
+written as
+
+\[
+Y_{ij} = \beta_{0j} + \beta_1 X_{ij} + \epsilon_{ij},
+\]
+
+where
+
+\[
+\beta_{0j} = \beta_0 + u_{0j}.
+\]
+
+Combining the two levels gives \[
+\beta_0 + \beta_1 X_{ij} + u_{0j} + \epsilon_{ij},
+\]
+
+where \(u_{0j}\sim N(0,\tau_0^2)\) represents the laboratory-specific
+deviation from the overall intercept and
+\(\epsilon_{ij}\sim N(0,\sigma^2)\) represents within-laboratory
+residual variation.
+
+\begin{table}[!h]
+\centering
+\caption{\label{tab:random intercept}Fixed Effects for the Random-Intercept Model}
+\centering
+\begin{tabular}[t]{llrr}
+\toprule
+  & Fixed Effect & Estimate & SE\\
+\midrule
+(Intercept) & Intercept & 1.071 & 1.129\\
+conc & True concentration & 0.958 & 0.005\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!h]
+\centering
+\caption{\label{tab:random intercept}Variance Components for the Random-Intercept Model}
+\centering
+\begin{tabular}[t]{lr}
+\toprule
+Variance Component & SD\\
+\midrule
+Lab intercept SD & 2.673\\
+Residual SD & 5.495\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The estimated fixed slope remains close to that of the global OLS model,
+but the random-intercept model additionally allows laboratories to be
+systematically shifted above or below the overall calibration curve. The
+estimated standard deviation of the laboratory-specific intercepts is
+2.673 \(\mu\)g/L, representing the amount of between-laboratory
+variability in baseline measurement after accounting for true
+concentration. The residual standard deviation is 5.495 \(\mu\)g/L and
+represents remaining variation among measurements within laboratories.
+
+\subsection{Random-Intercept and Random-Slope
+Model}\label{random-intercept-and-random-slope-model}
+
+The random-intercept model still assumes that every laboratory responds
+to increasing true concentration at exactly the same rate. The
+exploratory plot suggests that the calibration lines may also differ in
+slope, so I next allow both the intercept and the effect of true
+concentration to vary by laboratory.
+
+The level-1 model remains
+
+\[
+Y_{ij} = \beta_{0j} + \beta_{1j}X_{ij} + \epsilon_{ij},
+\]
+
+but the level-2 equations are now
+
+\[
+\beta_{0j} = \beta_0 + u_{0j}
+\]
+
+and
+
+\[
+\beta_{1j} = \beta_1 + u_{1j}.
+\]
+
+The combined model is therefore \[
+\beta_0 + \beta_1X_{ij} + u_{0j} + u_{1j}X_{ij} + \epsilon_{ij}.
+\]
+
+The random intercept \(u_{0j}\) represents how laboratory \(j\)'s
+baseline measurement differs from the overall intercept, while the
+random slope \(u_{1j}\) represents how that laboratory's response to
+increasing true concentration differs from the overall slope. The two
+random effects are allowed to be correlated.
+
+\begin{table}[!h]
+\centering
+\caption{\label{tab:random intercept and slope}Fixed Effects for the Random-Intercept and Random-Slope Model}
+\centering
+\begin{tabular}[t]{llrr}
+\toprule
+  & Fixed Effect & Estimate & SE\\
+\midrule
+(Intercept) & Intercept & 1.071 & 0.424\\
+conc & True concentration & 0.958 & 0.017\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!h]
+\centering
+\caption{\label{tab:random intercept and slope}Variance Components for the Random-Intercept and Random-Slope Model}
+\centering
+\begin{tabular}[t]{lr}
+\toprule
+Random-Effect Component & Estimate\\
+\midrule
+Lab intercept SD & 0.439\\
+Lab slope SD & 0.045\\
+Intercept-slope correlation & 1.000\\
+Residual SD & 4.245\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The estimated random-slope standard deviation is 0.045, indicating that
+the relationship between true and measured concentration varies across
+laboratories rather than differing only by a constant vertical shift.
+The estimated correlation between laboratory-specific intercepts and
+slopes is 1. This correlation describes whether laboratories with higher
+baseline measurements also tend to have steeper calibration slopes.
+
+\subsection{Comparison of Random-Effect
+Structures}\label{comparison-of-random-effect-structures}
+
+To determine whether allowing laboratory-specific slopes improves the
+model beyond allowing only laboratory-specific intercepts, I compared
+the two linear mixed-effects models using AIC, BIC, and the maximized
+log-likelihood. Smaller AIC and BIC values indicate a preferable balance
+between model fit and complexity.
+
+\begin{table}[!h]
+\centering
+\caption{\label{tab:compare-random-effects}Comparison of Random-Effect Structures}
+\centering
+\begin{tabular}[t]{lrrrrl}
+\toprule
+Model & Parameters & AIC & BIC & Log-Likelihood & Singular\\
+\midrule
+Random intercept & 4 & 1114.52 & 1127.18 & -553.26 & FALSE\\
+RI + slope, uncorrelated & 5 & 1037.12 & 1052.95 & -513.56 & FALSE\\
+RI + slope, correlated & 6 & 1037.89 & 1056.88 & -512.95 & TRUE\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The random-intercept and random-slope model has a BIC of 1056.88,
+compared with 1127.18 for the random-intercept model. The
+likelihood-ratio comparison gives \(\chi^2 = 80.63\) with 2 degrees of
+freedom and a p-value of \textless2e-16.
+
+\section{Mixed-Effect Quadratic
+Regression}\label{mixed-effect-quadratic-regression}
+
+The descriptive results suggest that the amount of bias may change
+across the concentration range. Measurements tend to be somewhat high at
+the lower concentrations but low at the upper end, raising the
+possibility that a strictly linear calibration curve may not fully
+capture the mean relationship. I therefore extend the previous
+mixed-effects model by adding a quadratic term for true concentration.
+The model is
+
+\[
+\beta_0 + \beta_1X_{ij} + \beta_2X_{ij}^{2} + u_{0j} + u_{1j}X_{ij} + \epsilon_{ij},
+\] where \(\beta_2\) represents curvature in the population-average
+calibration relationship. As before, \(u_{0j}\) allows laboratory \(j\)
+to have a laboratory-specific intercept and \(u_{1j}\) allows its linear
+slope to differ from the population-average slope. The model continues
+to assume a common residual variance across laboratories.
+
+\begin{table}[!h]
+\centering
+\caption{\label{tab:quadratic}Fixed Effects for the Quadratic Mixed-Effects Model}
+\centering
+\begin{tabular}[t]{llrr}
+\toprule
+  & Fixed Effect & Estimate & SE\\
+\midrule
+(Intercept) & Intercept & 1.1646 & 0.4822\\
+conc & True concentration & 0.9491 & 0.0294\\
+I(conc\textasciicircum{}2) & True concentration squared & 0.0000 & 0.0001\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The quadratic coefficient determines whether the rate of change in
+measured concentration changes systematically as true concentration
+increases. A coefficient close to zero would indicate little curvature
+and would favor retaining the simpler linear calibration relationship.
+
+To determine whether the quadratic term provides enough improvement to
+justify the additional complexity, I compare the quadratic model with
+the linear random-intercept and random-slope model using AIC, BIC, and
+the maximized log-likelihood. Both models are fitted by maximum
+likelihood and have the same random-effect structure, so the comparison
+focuses on the addition of the quadratic fixed effect.
+
+\begin{table}[!h]
+\centering
+\caption{\label{tab:comparison linear quadratic}Comparison of Linear and Quadratic Mixed-Effects Models}
+\centering
+\begin{tabular}[t]{lrrrr}
+\toprule
+Model & Parameters & AIC & BIC & Log-Likelihood\\
+\midrule
+Linear & 5 & 1037.12 & 1052.95 & -513.56\\
+Quadratic & 6 & 1039.02 & 1058.01 & -513.51\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Because the linear model is nested within the quadratic model, I also
+perform a likelihood-ratio comparison:
+
+The quadratic model has a BIC of 1058.01, compared with 1052.95 for the
+linear model. Because smaller BIC values are preferred, the comparison
+favors retaining the simpler linear specification.
+
+The likelihood-ratio test gives \(\chi^2 = 0.1\) with degree of freedom
+and \(p = 0.752\). This does not provide strong evidence that the
+quadratic term improves model fit.
+
+Taken together, the model-comparison results do not indicate that the
+additional curvature provides enough improvement to outweigh the greater
+complexity of the quadratic model. The linear calibration curve is
+therefore more parsimonious.
+
+\begin{center}\includegraphics[width=0.75\linewidth]{C:\Users\felix\OneDrive\Desktop\R Code\STAT 35800 Statistical Applications\Assignment 1\output\analysis_files/figure-latex/fitted-calibration-curves-1} \end{center}
+
+\end{document}
