@@ -1,10 +1,16 @@
 ---
 title: "Assignment 1"
 author: "Felix Liu"
+
 output:
   pdf_document:
     latex_engine: xelatex
-    
+
+colorlinks: true
+linkcolor: blue
+urlcolor: blue
+citecolor: blue
+
 knit: (function(inputFile, encoding) { out <- rmarkdown::render(inputFile, encoding = encoding); dest_dir <- file.path(dirname(inputFile), "..", "output"); dir.create(dest_dir, showWarnings = FALSE, recursive = TRUE); dest <- file.path(dest_dir, basename(out)); file.copy(out, dest, overwrite = TRUE); unlink(out); normalizePath(dest, winslash = "/") })
 
 header-includes:
@@ -836,3 +842,11 @@ calibration_plot <- ggplot(
 print(calibration_plot)
 ```
 The fitted laboratory-specific calibration curves show that the laboratories follow the same general linear relationship but differ in their slopes. The dashed line represents perfect calibration. Overall, the final mixed-effects model captures both the strong common calibration trend and the systematic heterogeneity across laboratories.
+
+\newpage
+
+# Code
+
+The complete R code used for this analysis can be found here:
+
+[GitHub Repository](https://github.com/FelixYLiu/STAT-35800-Statistical-Applications/blob/main/Assignments/Assignment%201/code/analysis.Rmd)
