@@ -1,0 +1,114 @@
+---
+title: "Assignment 2"
+author: "Felix Liu"
+
+output:
+  pdf_document:
+    latex_engine: xelatex
+
+colorlinks: true
+linkcolor: blue
+urlcolor: blue
+citecolor: blue
+
+knit: (function(inputFile, encoding) { out <- rmarkdown::render(inputFile, encoding = encoding); dest_dir <- file.path(dirname(inputFile), "..", "output"); dir.create(dest_dir, showWarnings = FALSE, recursive = TRUE); dest <- file.path(dest_dir, basename(out)); file.copy(out, dest, overwrite = TRUE); unlink(out); normalizePath(dest, winslash = "/") })
+
+header-includes:
+  - \usepackage{amsmath}
+  - \usepackage{amssymb}
+  - \usepackage{booktabs}
+  - \usepackage{caption}
+  - \usepackage{float}
+  - \usepackage{placeins}
+  - \usepackage{titling}
+  - \setlength{\droptitle}{-1.5cm}
+---
+
+```{r initialize, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+library(lme4)
+library(tidyr)
+
+# Work around TinyTeX same-file copy issue on Windows
+latex_tmp <- normalizePath(
+  tempdir(),
+  winslash = "/",
+  mustWork = TRUE
+)
+
+options(
+  tinytex.output_dir = latex_tmp,
+  tinytex.engine_args = shQuote(
+    paste0("--output-directory=", latex_tmp)
+  )
+)
+```
+
+```{r clean data}
+df <- read.csv("../data/SCHIZ.csv")
+names(df) <- trimws(names(df))
+```
+
+# Introduction
+
+The data come from the 1967 NIMH Schizophrenia Collaborative Study, a placebo-controlled randomized clinical trial examining changes in psychotic symptoms among patients with schizophrenia. Patients were assigned either to placebo or to one of three antipsychotic medications: chlorpromazine, fluphenazine, or thioridazine. For this analysis, the three medications are combined into a single antipsychotic treatment group.
+
+The primary outcome is the Inpatient Multidimensional Psychiatric Scale global score (IMPS79), measured over seven timepoints from baseline (week 0) through week 6. Lower IMPS79 scores indicate lower levels of psychiatric symptoms. Before analysis, values coded as (-9) were treated as missing. Table 1 reports the mean, standard deviation, and number of observed IMPS79 measurements at each week across all patients.
+
+# Exploratory Analysis
+
+```{r 1a means, SD, sample sizes across timepoints}
+# Recode -9 as missing
+df <- df %>%
+  mutate(IMPS79 = na_if(IMPS79, -9))
+
+# Summary statistics across the 7 timepoints
+summary_stats <- df %>%
+  group_by(WEEK) %>%
+  summarise(
+    mean = mean(IMPS79, na.rm = TRUE),
+    sd = sd(IMPS79, na.rm = TRUE),
+    n = sum(!is.na(IMPS79))
+  )
+
+summary_stats %>%
+  kable(
+    format = "latex",
+    booktabs = TRUE,
+    digits = c(0, 2, 2, 0),
+    align = c("c", "c", "c", "c"),
+    col.names = c("Week", "Mean", "SD", "Sample Size"),
+    caption = "Summary Statistics for IMPS79 Across Timepoints"
+  ) %>%
+  kable_styling(
+    latex_options = c("hold_position", "striped"),
+    position = "center",
+    font_size = 10
+  )
+```
+
+
+## AI Initial Thoughts
+The mean IMPS79 score decreases over time, from 5.37 at baseline to 3.31 at week 6, suggesting that psychiatric symptoms generally improve over the course of the study. However, the decrease does not appear to be perfectly linear. The largest drop occurs early in the study, while the amount of change becomes smaller later on. The standard deviation also increases after baseline, suggesting that patients become more heterogeneous in their responses over time.
+
+The sample sizes vary substantially across the seven weeks. In particular, weeks 2, 4, and 5 contain very few observed measurements compared with weeks 0, 1, 3, and 6. Therefore, the means at these timepoints are much less reliable and should be interpreted cautiously. The presence of missing observations also makes a longitudinal modeling approach preferable to simply analyzing each week separately.
+
+## AI's Revised Thoughts
+The mean IMPS79 score decreases over time, from 5.37 at baseline to 3.31 at week 6, suggesting an overall improvement in psychiatric symptoms during the study. The decrease appears to be largest early in the study and then becomes more gradual, so a simple linear relationship with week may not adequately describe the time trend. A square-root transformation of week may be more appropriate because it allows for more rapid change early in the study followed by slower change later.
+
+The sample sizes also vary greatly across timepoints. In particular, weeks 2, 4, and 5 contain very few observations compared with weeks 0, 1, 3, and 6. These were not the primary scheduled measurement occasions, so their sample means should be interpreted cautiously. This also makes treating all seven weeks as separate categorical time effects less attractive, since several of the timepoints contain very little information.
+
+Because IMPS79 represents ordered categories of psychiatric severity, I would consider a mixed-effects ordinal logistic regression model. The model could include drug group, square root of week, and a drug-by-time interaction as fixed effects. The interaction would test whether the rate of improvement over time differs between the antipsychotic and placebo groups.
+
+Since each patient contributes repeated observations, measurements from the same patient are correlated. Therefore, an ordinary regression model that assumes independence would not be appropriate. A patient-specific random intercept would account for differences in baseline severity across patients, while a random time trend would allow patients to differ in how quickly their symptoms change. Thus, a mixed-effects proportional-odds model with random intercepts and random time trends would be a reasonable model for these data.
+
+For statistical modeling, these data have repeated measurements from the same patients, so observations from the same patient are likely to be correlated. A mixed-effects model could account for this dependence by including a patient-specific random intercept. Because the pattern in the means suggests that change over time may not be linear, I would initially treat week as a categorical variable rather than assuming a single constant linear trend. This allows the mean IMPS79 score to change more flexibly across timepoints. Since the main goal of the study is to compare antipsychotic treatment with placebo, the model should also include treatment group and a treatment-by-time interaction. The interaction would allow us to determine whether the pattern of change in IMPS79 over time differs between the treatment and placebo groups.
