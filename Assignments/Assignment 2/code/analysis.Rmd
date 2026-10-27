@@ -1191,3 +1191,11 @@ ggplot() +
 # Conclusion
 
 Overall, IMPS79 scores decrease over the six-week study period, but the change is nonlinear and varies substantially across patients. A mixed-effects model using square-root time with patient-specific random intercepts and slopes provided the best representation of the longitudinal trend. After incorporating treatment, the preferred model included a treatment-by-square-root-time interaction but no separate treatment main effect. The treatment and placebo groups therefore begin at similar expected symptom levels, but patients receiving antipsychotic medication show a substantially faster decline in IMPS79 over time. 
+
+\clearpage
+
+# Code
+
+The complete R code used for this analysis can be found here:
+
+[GitHub Repository](https://github.com/FelixYLiu/STAT-35800-Statistical-Applications/blob/main/Assignments/Assignment%202/code/analysis.Rmd)
