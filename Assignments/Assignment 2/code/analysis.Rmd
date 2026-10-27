@@ -36,6 +36,7 @@ library(ggplot2)
 library(knitr)
 library(kableExtra)
 library(lme4)
+library(lmerTest)
 library(tidyr)
 
 # Work around TinyTeX same-file copy issue on Windows
@@ -56,15 +57,15 @@ options(
 ```{r clean data}
 df <- read.csv("../data/SCHIZ.csv")
 names(df) <- trimws(names(df))
+
+format_p <- function(p) {
+  ifelse(p < 0.001, "$<0.001$", sprintf("%.3f", p))
+}
 ```
 
-# Introduction
+# Introduction & Exploratory Analysis
 
-The data come from the 1967 NIMH Schizophrenia Collaborative Study, a placebo-controlled randomized clinical trial examining changes in psychotic symptoms among patients with schizophrenia. Patients were assigned either to placebo or to one of three antipsychotic medications: chlorpromazine, fluphenazine, or thioridazine. For this analysis, the three medications are combined into a single antipsychotic treatment group.
-
-The primary outcome is the Inpatient Multidimensional Psychiatric Scale global score (IMPS79), measured over seven timepoints from baseline (week 0) through week 6. Lower IMPS79 scores indicate lower levels of psychiatric symptoms. Before analysis, values coded as (-9) were treated as missing. Table 1 reports the mean, standard deviation, and number of observed IMPS79 measurements at each week across all patients.
-
-# Exploratory Analysis
+The data comes from the 1967 NIMH Schizophrenia Collaborative Study, a placebo-controlled randomized clinical trial examining changes in psychotic symptoms among patients with schizophrenia. For this analysis, the three medications are combined into a single treatment group.
 
 ```{r 1a means, SD, sample sizes across timepoints}
 # Recode -9 as missing
@@ -96,19 +97,1097 @@ summary_stats %>%
   )
 ```
 
+## Initial Thoughts
+
+Generally, IMPS79 scores look to decrease over time, though not necessarily in a linear fashion. The largest changes in IMPS79 scores occur between the initial weeks, and the changes become smaller over time. In addition, variation between patients also increases over time, an expected observation of longitudinal data. 
+
+Initially, I have two thoughts on how we can model this data. Firstly, we can use a mixed effect model and analyze individual variation within these trends as well as the treatment and time interaction term. Second, we could also use a ordinal mixed effect model by turning IMPS79 into an ordinal outcome. The upside of this is the analysis is more interpretable, if the categories have actual meaning, rather than arbitrary. However, we are also losing a lot of information. For instance, IMPS79 values of 3, 3.5, and 4 would be grouped into one category, but clearly there is a distinction that can be made between these 3 values. In addition, the assumption of proportional odds, which may not be realistic.
 
 ## AI Initial Thoughts
+
+**Prompt**: *Comment on the values you obtained in 1a, and what might be suggested for a statistical modeling of these data.*
+
 The mean IMPS79 score decreases over time, from 5.37 at baseline to 3.31 at week 6, suggesting that psychiatric symptoms generally improve over the course of the study. However, the decrease does not appear to be perfectly linear. The largest drop occurs early in the study, while the amount of change becomes smaller later on. The standard deviation also increases after baseline, suggesting that patients become more heterogeneous in their responses over time.
 
 The sample sizes vary substantially across the seven weeks. In particular, weeks 2, 4, and 5 contain very few observed measurements compared with weeks 0, 1, 3, and 6. Therefore, the means at these timepoints are much less reliable and should be interpreted cautiously. The presence of missing observations also makes a longitudinal modeling approach preferable to simply analyzing each week separately.
 
 ## AI's Revised Thoughts
-The mean IMPS79 score decreases over time, from 5.37 at baseline to 3.31 at week 6, suggesting an overall improvement in psychiatric symptoms during the study. The decrease appears to be largest early in the study and then becomes more gradual, so a simple linear relationship with week may not adequately describe the time trend. A square-root transformation of week may be more appropriate because it allows for more rapid change early in the study followed by slower change later.
 
-The sample sizes also vary greatly across timepoints. In particular, weeks 2, 4, and 5 contain very few observations compared with weeks 0, 1, 3, and 6. These were not the primary scheduled measurement occasions, so their sample means should be interpreted cautiously. This also makes treating all seven weeks as separate categorical time effects less attractive, since several of the timepoints contain very little information.
+**Prompt**: *Here is the course textbook, with an emphasis on chapters 1-5, 9-11. Comment on the values you obtained in 1a, and what might be suggested for a statistical modeling of these data.*
 
-Because IMPS79 represents ordered categories of psychiatric severity, I would consider a mixed-effects ordinal logistic regression model. The model could include drug group, square root of week, and a drug-by-time interaction as fixed effects. The interaction would test whether the rate of improvement over time differs between the antipsychotic and placebo groups.
+The mean IMPS79 score decreases substantially over time, from 5.37 at baseline to 3.31 at week 6, suggesting that patients' psychiatric symptoms generally improve over the course of the study. The decline does not appear completely linear: the mean falls relatively quickly early in the study and then appears to level off later. 
 
-Since each patient contributes repeated observations, measurements from the same patient are correlated. Therefore, an ordinary regression model that assumes independence would not be appropriate. A patient-specific random intercept would account for differences in baseline severity across patients, while a random time trend would allow patients to differ in how quickly their symptoms change. Thus, a mixed-effects proportional-odds model with random intercepts and random time trends would be a reasonable model for these data.
+The sample sizes are highly unbalanced across weeks. Weeks 0, 1, 3, and 6 contain most of the observations, whereas weeks 2, 4, and 5 contain very few. This pattern is largely due to the study design, since the primary scheduled assessments were at weeks 0, 1, 3, and 6, although there is also some attrition by week 6. Therefore, the means at weeks 2, 4, and 5 should be interpreted cautiously and should not be given the same weight as the better-observed time points.
 
-For statistical modeling, these data have repeated measurements from the same patients, so observations from the same patient are likely to be correlated. A mixed-effects model could account for this dependence by including a patient-specific random intercept. Because the pattern in the means suggests that change over time may not be linear, I would initially treat week as a categorical variable rather than assuming a single constant linear trend. This allows the mean IMPS79 score to change more flexibly across timepoints. Since the main goal of the study is to compare antipsychotic treatment with placebo, the model should also include treatment group and a treatment-by-time interaction. The interaction would allow us to determine whether the pattern of change in IMPS79 over time differs between the treatment and placebo groups.
+Because IMPS79 is repeatedly measured on the same patients, the observations within a patient are correlated, so an ordinary linear regression assuming independent observations would not be appropriate. A mixed-effects regression model for the continuous IMPS79 outcome would be more suitable. A random intercept could account for differences in patients' baseline severity, and a random time slope could allow patients to improve at different rates. The apparent nonlinear pattern over time also suggests that time may need to be modeled nonlinearly. For example, a square-root transformation of week could capture a relatively rapid initial improvement followed by slower subsequent change; alternatively, polynomial or other flexible time trends could be considered. Treatment group and a treatment-by-time interaction could subsequently be included to determine whether the trajectories differ between patients receiving antipsychotic medication and placebo.
+
+## Comparison of Responses
+
+Compared with the initial AI response, the revised response was more specific about the structure of the data and proposed concrete modeling choices. This was more consistent with my own initial thoughts, where I suggested different forms of mixed-effect models. 
+
+# Mixed-Effect Models
+
+A mixed-effects model is well suited to these data because it can use all available observations even when patients are missing measurements at some timepoints. This is especially useful here because the number of observations differs substantially across weeks. Under the usual assumption that the missingness is ignorable, such as missing at random, the model can accommodate this unbalanced longitudinal structure without discarding patients with incomplete follow-up.
+
+## Linear Mixed-Effect Model
+
+For this analysis, treatment group is initially ignored. First, we fit a linear mixed-effects model allowing both the intercept and the effect of time to vary across patients. The model is
+
+$$
+Y_{ij} = b_{0i} + b_{1i} \cdot \text{Week}_{ij} + \epsilon_{ij}, \qquad b_{0i} = \beta_0 + u_{0i}, \quad
+b_{1i} = \beta_1 + u_{1i}.
+$$
+
+Here, $\beta_0$ represents the population-average IMPS79 score at baseline and $\beta_1$ represents the population-average linear change in IMPS79 per week. 
+
+```{r linear-model, include=FALSE}
+df$ID <- factor(df$ID)
+
+linear_model <- lmer(
+  IMPS79 ~ WEEK + (1 + WEEK | ID),
+  data = df,
+  REML = FALSE,
+  na.action = na.omit,
+  control = lmerControl(optimizer = "bobyqa")
+)
+
+linear_coef <- coef(summary(linear_model))
+
+linear_fixed <- data.frame(
+  Term = c(
+    "Intercept",
+    "Week"
+  ),
+  Estimate = linear_coef[, "Estimate"],
+  SE = linear_coef[, "Std. Error"],
+  p_value = format_p(linear_coef[, "Pr(>|t|)"])
+)
+
+linear_vc <- as.data.frame(VarCorr(linear_model))
+
+intercept_sd <- linear_vc$sdcor[
+  linear_vc$grp == "ID" &
+  linear_vc$var1 == "(Intercept)" &
+  is.na(linear_vc$var2)
+]
+
+slope_sd <- linear_vc$sdcor[
+  linear_vc$grp == "ID" &
+  linear_vc$var1 == "WEEK" &
+  is.na(linear_vc$var2)
+]
+
+intercept_slope_cor <- linear_vc$sdcor[
+  linear_vc$grp == "ID" &
+  !is.na(linear_vc$var2)
+]
+
+linear_random <- data.frame(
+  Component = c(
+    "Patient intercept SD",
+    "Patient slope SD",
+    "Intercept-slope correlation",
+    "Residual SD"
+  ),
+  Estimate = c(
+    intercept_sd,
+    slope_sd,
+    intercept_slope_cor,
+    sigma(linear_model)
+  )
+)
+```
+
+```{r linear-model-tables, results='asis'}
+cat("\\begin{center}\n")
+
+# Fixed effects table
+cat("\\begin{minipage}[t]{0.48\\textwidth}\n")
+cat("\\centering\n")
+cat("\\scriptsize\n")
+cat("\\captionof{table}{Fixed Effects for Linear Mixed-Effects Model}\n")
+
+cat(
+  kable(
+    linear_fixed,
+    format = "latex",
+    booktabs = TRUE,
+    digits = 3,
+    row.names = FALSE,
+    col.names = c(
+      "Fixed Effect",
+      "Estimate",
+      "SE",
+      "$p$-value"
+    ),
+    escape = FALSE
+  )
+)
+
+cat("\n\\end{minipage}\n")
+cat("\\hfill\n")
+
+# Random effects table
+cat("\\begin{minipage}[t]{0.48\\textwidth}\n")
+cat("\\centering\n")
+cat("\\scriptsize\n")
+cat("\\captionof{table}{Random Effects for Linear Mixed-Effects Model}\n")
+
+cat(
+  kable(
+    linear_random,
+    format = "latex",
+    booktabs = TRUE,
+    digits = 3,
+    row.names = FALSE,
+    col.names = c(
+      "Random-Effect Component",
+      "Estimate"
+    )
+  )
+)
+
+cat("\n\\end{minipage}\n")
+
+cat("\\end{center}\n")
+```
+
+## Non-linear Mixed-Effect Models
+
+To examine whether the overall trend in IMPS79 over time is curvilinear rather than linear, I next fit a quadratic mixed-effects model and a square-root model. The quadratic model is
+
+$$
+Y_{ij} = b_{0i} + b_{1i} \cdot \text{Week}_{ij} + \beta_2 \cdot \text{Week}_{ij}^2 + \epsilon_{ij}, \qquad b_{0i} = \beta_0 + u_{0i}, \quad
+b_{1i} = \beta_1 + u_{1i},
+$$
+and the square-root model can be modeled as 
+
+$$
+Y_{ij} = b_{0i} + b_{1i}\sqrt{\text{Week}_{ij}} + \epsilon_{ij}, \qquad b_{0i}=\beta_0+u_{0i},
+\quad
+b_{1i}=\beta_1+u_{1i}.
+$$
+```{r quadratic-model, include=FALSE}
+quad_model <- lmer(
+  IMPS79 ~ WEEK + I(WEEK^2) + (1 + WEEK | ID),
+  data = df,
+  REML = FALSE,
+  na.action = na.omit,
+  control = lmerControl(optimizer = "bobyqa")
+)
+
+quad_coef <- coef(summary(quad_model))
+
+quad_fixed <- data.frame(
+  Term = c(
+    "Intercept",
+    "Week",
+    "Week squared"
+  ),
+  Estimate = quad_coef[, "Estimate"],
+  SE = quad_coef[, "Std. Error"],
+  p_value = format_p(quad_coef[, "Pr(>|t|)"])
+)
+
+functional_form_comparison <- data.frame(
+  Model = c(
+    "Linear",
+    "Quadratic"
+  ),
+  Parameters = c(
+    attr(logLik(linear_model), "df"),
+    attr(logLik(quad_model), "df")
+  ),
+  AIC = c(
+    AIC(linear_model),
+    AIC(quad_model)
+  ),
+  BIC = c(
+    BIC(linear_model),
+    BIC(quad_model)
+  ),
+  LogLik = c(
+    as.numeric(logLik(linear_model)),
+    as.numeric(logLik(quad_model))
+  )
+)
+
+quad_lrt <- anova(linear_model, quad_model)
+
+quad_chisq <- quad_lrt$Chisq[2]
+quad_df <- quad_lrt$Df[2]
+quad_p <- quad_lrt$`Pr(>Chisq)`[2]
+```
+
+```{r sqrt-time-model, include=FALSE}
+df <- df %>%
+  mutate(sqrt_week = sqrt(WEEK))
+
+sqrt_model <- lmer(
+  IMPS79 ~ sqrt_week + (1 + sqrt_week | ID),
+  data = df,
+  REML = FALSE,
+  na.action = na.omit,
+  control = lmerControl(optimizer = "bobyqa")
+)
+
+sqrt_coef <- coef(summary(sqrt_model))
+
+sqrt_fixed <- data.frame(
+  Term = c(
+    "Intercept",
+    "Square root of week"
+  ),
+  Estimate = sqrt_coef[, "Estimate"],
+  SE = sqrt_coef[, "Std. Error"],
+  p_value = format_p(sqrt_coef[, "Pr(>|t|)"])
+)
+
+time_form_comparison <- data.frame(
+  Model = c(
+    "Linear",
+    "Quadratic",
+    "Square-root time"
+  ),
+  Parameters = c(
+    attr(logLik(linear_model), "df"),
+    attr(logLik(quad_model), "df"),
+    attr(logLik(sqrt_model), "df")
+  ),
+  AIC = c(
+    AIC(linear_model),
+    AIC(quad_model),
+    AIC(sqrt_model)
+  ),
+  BIC = c(
+    BIC(linear_model),
+    BIC(quad_model),
+    BIC(sqrt_model)
+  ),
+  LogLik = c(
+    as.numeric(logLik(linear_model)),
+    as.numeric(logLik(quad_model)),
+    as.numeric(logLik(sqrt_model))
+  )
+)
+```
+
+```{r nonlinear-fixed-effect-tables, results='asis'}
+cat("\\begin{center}\n")
+
+# Table 4: Quadratic fixed effects
+cat("\\begin{minipage}[t]{0.48\\textwidth}\n")
+cat("\\centering\n")
+cat("\\scriptsize\n")
+cat("\\captionof{table}{Fixed Effects for Quadratic Mixed-Effects Model}\n")
+
+cat(
+  kable(
+    quad_fixed,
+    format = "latex",
+    booktabs = TRUE,
+    digits = 4,
+    row.names = FALSE,
+    col.names = c(
+      "Fixed Effect",
+      "Estimate",
+      "SE",
+      "$p$-value"
+    ),
+    escape = FALSE
+  )
+)
+
+cat("\n\\end{minipage}\n")
+cat("\\hfill\n")
+
+# Table 5: Square-root fixed effects
+cat("\\begin{minipage}[t]{0.48\\textwidth}\n")
+cat("\\centering\n")
+cat("\\scriptsize\n")
+cat("\\captionof{table}{Fixed Effects for Square-Root Mixed-Effects Model}\n")
+
+cat(
+  kable(
+    sqrt_fixed,
+    format = "latex",
+    booktabs = TRUE,
+    digits = 4,
+    row.names = FALSE,
+    col.names = c(
+      "Fixed Effect",
+      "Estimate",
+      "SE",
+      "$p$-value"
+    ),
+    escape = FALSE
+  )
+)
+
+cat("\n\\end{minipage}\n")
+
+cat("\\end{center}\n")
+```
+
+```{r time-form-comparison-table}
+time_form_comparison %>%
+  kable(
+    format = "latex",
+    booktabs = TRUE,
+    digits = 2,
+    row.names = FALSE,
+    col.names = c(
+      "Model",
+      "Parameters",
+      "AIC",
+      "BIC",
+      "Log-Likelihood"
+    ),
+    caption = "Comparison of Alternative Time Trends"
+  ) %>%
+  kable_styling(
+    latex_options = "hold_position",
+    position = "center"
+  )
+```
+
+The results indicate that a simple linear time trend does not adequately describe the change in IMPS79 scores. The quadratic model improves on the linear model, with BIC decreasing from 4918.47 to 4869.34. However, the square-root time model provides an even better fit, with BIC = 4764.75. Because the square-root model achieves the best fit while requiring only a single transformed time coefficient, it was selected as the preferred specification for the longitudinal trend.
+
+Under the square-root model, the estimated population-average intercept is 5.388 and the coefficient for square-root time is -0.828. However, the effect is not constant across calendar weeks: square-root time increases rapidly at first and then more slowly. This is consistent with the pattern observed in the sample means.
+
+```{r sqrt-random-effects, include=FALSE}
+# Square-root model with random intercept only
+sqrt_ri_model <- lmer(
+  IMPS79 ~ sqrt_week + (1 | ID),
+  data = df,
+  REML = FALSE,
+  na.action = na.omit
+)
+
+# Square-root model with random intercept and random slope
+sqrt_rs_model <- lmer(
+  IMPS79 ~ sqrt_week + (1 + sqrt_week | ID),
+  data = df,
+  REML = FALSE,
+  na.action = na.omit,
+  control = lmerControl(optimizer = "bobyqa")
+)
+
+sqrt_random_lrt <- anova(
+  sqrt_ri_model,
+  sqrt_rs_model
+)
+
+random_chisq <- sqrt_random_lrt$Chisq[2]
+random_df <- sqrt_random_lrt$Df[2]
+random_p <- sqrt_random_lrt$`Pr(>Chisq)`[2]
+
+random_effect_comparison <- data.frame(
+  Model = c(
+    "Random intercept",
+    "Random intercept + slope"
+  ),
+  AIC = c(
+    AIC(sqrt_ri_model),
+    AIC(sqrt_rs_model)
+  ),
+  BIC = c(
+    BIC(sqrt_ri_model),
+    BIC(sqrt_rs_model)
+  ),
+  LogLik = c(
+    as.numeric(logLik(sqrt_ri_model)),
+    as.numeric(logLik(sqrt_rs_model))
+  )
+)
+```
+
+```{r sqrt-random-effect-table}
+random_effect_comparison %>%
+  kable(
+    format = "latex",
+    booktabs = TRUE,
+    digits = 2,
+    row.names = FALSE,
+    col.names = c(
+      "Model",
+      "AIC",
+      "BIC",
+      "Log-Likelihood"
+    ),
+    caption = "Comparison of Random-Effect Structures for Square-Root Time Model"
+  ) %>%
+  kable_styling(
+    latex_options = "hold_position",
+    position = "center"
+  )
+```
+
+The random-intercept and random-slope model fits substantially better than the random-intercept-only model. The likelihood-ratio test also strongly favors the random-slope model, $\chi^2(2) \approx 240.50$, $p<0.001$. 
+
+```{r final-model, include=FALSE}
+final_model <- lmer(
+  IMPS79 ~ sqrt_week + (1 + sqrt_week | ID),
+  data = df,
+  REML = TRUE,
+  na.action = na.omit,
+  control = lmerControl(optimizer = "bobyqa")
+)
+```
+
+```{r spaghetti-data, include=FALSE}
+prediction_grid <- expand.grid(
+  WEEK = seq(0, 6, by = 0.05),
+  ID = levels(df$ID)
+)
+
+prediction_grid <- prediction_grid %>%
+  mutate(
+    sqrt_week = sqrt(WEEK),
+    ID = factor(ID, levels = levels(df$ID))
+  )
+
+# Patient-specific fitted values
+prediction_grid$predicted <- predict(
+  final_model,
+  newdata = prediction_grid,
+  re.form = NULL
+)
+
+population_grid <- data.frame(
+  WEEK = seq(0, 6, by = 0.05)
+) %>%
+  mutate(
+    sqrt_week = sqrt(WEEK)
+  )
+
+population_grid$predicted <- predict(
+  final_model,
+  newdata = population_grid,
+  re.form = NA
+)
+
+observed_means <- df %>%
+  group_by(WEEK) %>%
+  summarise(
+    mean_IMPS79 = mean(IMPS79, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+```{r final-spaghetti-plot, fig.width=7, fig.height=4, out.width='82%', fig.align='center'}
+ggplot() +
+
+  # Observed patient trajectories
+  geom_line(
+    data = df,
+    aes(
+      x = WEEK,
+      y = IMPS79,
+      group = ID
+    ),
+    color = "grey65",
+    alpha = 0.10,
+    linewidth = 0.3
+  ) +
+
+  # Patient-specific fitted trajectories
+  geom_line(
+    data = prediction_grid,
+    aes(
+      x = WEEK,
+      y = predicted,
+      group = ID
+    ),
+    color = "steelblue",
+    alpha = 0.12,
+    linewidth = 0.45
+  ) +
+
+  # Population-average fitted trajectory
+  geom_line(
+    data = population_grid,
+    aes(
+      x = WEEK,
+      y = predicted
+    ),
+    color = "firebrick",
+    linewidth = 1.2
+  ) +
+
+  # Observed weekly means
+  geom_point(
+    data = observed_means,
+    aes(
+      x = WEEK,
+      y = mean_IMPS79
+    ),
+    color = "black",
+    size = 2.2
+  ) +
+
+  labs(
+    x = "Week",
+    y = "IMPS79",
+    title = "Observed and Fitted Patient Trajectories"
+  ) +
+
+  theme_minimal()
+```
+
+The fitted trajectories show substantial patient-to-patient variation in both baseline IMPS79 levels and subsequent rates of change. However, most fitted trajectories follow the same general pattern of relatively rapid improvement early in the study followed by a more gradual decline at later weeks. 
+
+# Treatment Effects
+
+Since we've established that a square-root mixed effect model best fits the model above, this model is retained in this section, which explores the treatment effect of the drug. Let $\text{Drug}_i=0$ denote placebo and $\text{Drug}_i=1$ denote treatment.
+
+Three models are considered. First, I modeled time but no interaction, which allows the treatment and placebo groups to differ in their overall levels while constraining them to follow the same time trend:
+
+$$
+Y_{ij} = b_{0i} + b_{1i}\sqrt{\text{Week}_{ij}} + \beta_2\text{Drug}_i + \epsilon_{ij}.
+$$
+This provides a useful baseline model for assessing whether treatment is associated with an overall difference in symptom severity, without yet assuming that treatment changes the rate of improvement over time. Second, the full interaction model:
+
+$$
+Y_{ij} = b_{0i} + b_{1i}\sqrt{\text{Week}_{ij}}
++ \beta_2\text{Drug}_i + \beta_3\left(\text{Drug}_i \times \sqrt{\text{Week}_{ij}}\right) + \epsilon_{ij}.
+$$
+
+This is the most flexible of the three specifications because it allows the treatment and placebo groups to differ both at baseline and in their longitudinal trajectories. Finally, I fit a model without the treatment main effect:
+
+$$
+Y_{ij} = b_{0i} + b_{1i}\sqrt{\text{Week}_{ij}} + \beta_3\left(\text{Drug}_i \times \sqrt{\text{Week}_{ij}}\right) + \epsilon_{ij}.
+$$
+This model constrains the two groups to have the same expected baseline IMPS79 score while still allowing their trajectories to diverge over time. This restriction is reasonable to consider in a randomized trial, where large systematic baseline differences between treatment groups are not expected, and it may provide a more parsimonious model if the treatment main effect is unnecessary. As above, for all three models,
+
+$$
+b_{0i}=\beta_0+u_{0i}, \qquad b_{1i}=\beta_1+u_{1i},
+$$
+
+where $\beta_0$ is the mean baseline IMPS79 score for the placebo group, $\beta_1$ is the square-root time trend for placebo, $\beta_2$ is the baseline difference between treatment and placebo, and $\beta_3$ is the difference in the time trend between treatment and placebo. Thus, $\beta_3$ is the primary parameter for determining whether treatment is associated with a different pattern of improvement over time.
+
+```{r treatment-models, include=FALSE}
+# Model 1: treatment main effect, but no treatment-time interaction
+treat_no_interaction <- lmer(
+  IMPS79 ~ DRUG + sqrt_week +
+    (1 + sqrt_week | ID),
+  data = df,
+  REML = FALSE,
+  na.action = na.omit,
+  control = lmerControl(optimizer = "bobyqa")
+)
+
+# Model 2: full treatment-by-time interaction
+treat_full <- lmer(
+  IMPS79 ~ DRUG * sqrt_week +
+    (1 + sqrt_week | ID),
+  data = df,
+  REML = FALSE,
+  na.action = na.omit,
+  control = lmerControl(optimizer = "bobyqa")
+)
+
+# Model 3: interaction, but no treatment main effect
+treat_no_main <- lmer(
+  IMPS79 ~ sqrt_week + DRUG:sqrt_week +
+    (1 + sqrt_week | ID),
+  data = df,
+  REML = FALSE,
+  na.action = na.omit,
+  control = lmerControl(optimizer = "bobyqa")
+)
+```
+
+```{r treatment-fixed-effects, include=FALSE}
+extract_fixed <- function(model, model_name) {
+  coefs <- coef(summary(model))
+  
+  term_names <- rownames(coefs)
+  
+  term_names <- dplyr::recode(
+    term_names,
+    "(Intercept)" = "Intercept",
+    "DRUG" = "Drug",
+    "sqrt_week" = "Square root of week",
+    "DRUG:sqrt_week" = "Drug $\\times$ square root of week",
+    "sqrt_week:DRUG" = "Drug $\\times$ square root of week"
+  )
+  
+  data.frame(
+    Model = model_name,
+    Term = term_names,
+    Estimate = coefs[, "Estimate"],
+    SE = coefs[, "Std. Error"],
+    p_value = format_p(coefs[, "Pr(>|t|)"]),
+    row.names = NULL
+  )
+}
+
+treatment_fixed <- bind_rows(
+  extract_fixed(
+    treat_no_interaction,
+    "No interaction"
+  ),
+  extract_fixed(
+    treat_full,
+    "Full interaction"
+  ),
+  extract_fixed(
+    treat_no_main,
+    "No treatment main effect"
+  )
+)
+```
+
+```{r treatment-fixed-effects-tables, results='asis'}
+# Split into three tables
+no_interaction_table <- treatment_fixed %>%
+  filter(Model == "No interaction") %>%
+  select(-Model)
+
+full_interaction_table <- treatment_fixed %>%
+  filter(Model == "Full interaction") %>%
+  select(-Model)
+
+no_main_table <- treatment_fixed %>%
+  filter(Model == "No treatment main effect") %>%
+  select(-Model)
+
+
+# ---- First row: two models side by side ----
+cat("\\begin{center}\n")
+
+# Table 8
+cat("\\begin{minipage}[t]{0.46\\textwidth}\n")
+cat("\\centering\n")
+cat("\\scriptsize\n")
+cat("\\captionof{table}{Fixed Effects: No Interaction Model}\n")
+
+cat(
+  kable(
+    no_interaction_table,
+    format = "latex",
+    booktabs = TRUE,
+    digits = 3,
+    row.names = FALSE,
+    col.names = c(
+      "Fixed Effect",
+      "Estimate",
+      "SE",
+      "$p$-value"
+    ),
+    escape = FALSE
+  )
+)
+
+cat("\n\\end{minipage}\n")
+cat("\\hfill\n")
+
+# Table 9
+cat("\\begin{minipage}[t]{0.46\\textwidth}\n")
+cat("\\centering\n")
+cat("\\scriptsize\n")
+cat("\\captionof{table}{Fixed Effects: Full Interaction Model}\n")
+
+cat(
+  kable(
+    full_interaction_table,
+    format = "latex",
+    booktabs = TRUE,
+    digits = 3,
+    row.names = FALSE,
+    col.names = c(
+      "Fixed Effect",
+      "Estimate",
+      "SE",
+      "$p$-value"
+    ),
+    escape = FALSE
+  )
+)
+
+cat("\n\\end{minipage}\n")
+
+cat("\\end{center}\n")
+
+cat("\\vspace{0.4cm}\n")
+
+
+# ---- Second row: preferred model centered ----
+cat("\\begin{center}\n")
+cat("\\begin{minipage}[t]{0.55\\textwidth}\n")
+cat("\\centering\n")
+cat("\\scriptsize\n")
+cat("\\captionof{table}{Fixed Effects: No Treatment Main Effect Model}\n")
+
+cat(
+  kable(
+    no_main_table,
+    format = "latex",
+    booktabs = TRUE,
+    digits = 3,
+    row.names = FALSE,
+    col.names = c(
+      "Fixed Effect",
+      "Estimate",
+      "SE",
+      "$p$-value"
+    ),
+    escape = FALSE
+  )
+)
+
+cat("\n\\end{minipage}\n")
+cat("\\end{center}\n")
+```
+
+```{r treatment-model-fit-comparison, include=FALSE}
+treatment_fit_comparison <- data.frame(
+  Model = c(
+    "Square-root time only",
+    "Treatment, no interaction",
+    "Full interaction",
+    "Interaction, no treatment main effect"
+  ),
+  Parameters = c(
+    attr(logLik(sqrt_model), "df"),
+    attr(logLik(treat_no_interaction), "df"),
+    attr(logLik(treat_full), "df"),
+    attr(logLik(treat_no_main), "df")
+  ),
+  AIC = c(
+    AIC(sqrt_model),
+    AIC(treat_no_interaction),
+    AIC(treat_full),
+    AIC(treat_no_main)
+  ),
+  BIC = c(
+    BIC(sqrt_model),
+    BIC(treat_no_interaction),
+    BIC(treat_full),
+    BIC(treat_no_main)
+  ),
+  LogLik = c(
+    as.numeric(logLik(sqrt_model)),
+    as.numeric(logLik(treat_no_interaction)),
+    as.numeric(logLik(treat_full)),
+    as.numeric(logLik(treat_no_main))
+  )
+)
+```
+
+```{r treatment-model-fit-table}
+treatment_fit_comparison %>%
+  kable(
+    format = "latex",
+    booktabs = TRUE,
+    digits = 2,
+    row.names = FALSE,
+    col.names = c(
+      "Model",
+      "Parameters",
+      "AIC",
+      "BIC",
+      "Log-Likelihood"
+    ),
+    caption = "Comparison of Treatment Models"
+  ) %>%
+  kable_styling(
+    latex_options = "hold_position",
+    position = "center",
+    font_size = 9
+  )
+```
+
+The model comparisons provide strong evidence that treatment affects the trajectory of IMPS79 over time. Adding treatment alone to the square-root time model produces only a modest improvement in fit, whereas adding the treatment-by-time interaction results in a larger decrease in both AIC and BIC. This indicates that the primary treatment effect is not a constant difference between the treatment and placebo groups, but rather a difference in how their symptoms change over time.
+
+The full interaction model and the model without the treatment main effect have similar AIC / BIC values. The treatment main effect in the full model is not statistically significant ($\hat{\beta}_2=0.046,\ p=0.647$), while the treatment-by-square-root-time interaction is highly significant ($\hat{\beta}_3=-0.641,\ p<0.001$).
+
+The preferred model is therefore the interaction model without the treatment main effect, because it has one fewer parameter and is therefore most parsimonious. In this model, the estimated square-root-time slope for treated patients is approximately $-0.346-0.627=-0.973$, compared with -0.346 for placebo patients. This suggests that both groups improve over time, but patients receiving antipsychotic treatment improve substantially faster than patients receiving placebo.
+
+```{r treatment-model-lrts, include=FALSE}
+# 1. Does adding a treatment main effect improve the time-only model?
+lrt_treatment_main <- anova(
+  sqrt_model,
+  treat_no_interaction
+)
+
+# 2. Does adding the treatment-by-time interaction improve fit?
+lrt_interaction <- anova(
+  treat_no_interaction,
+  treat_full
+)
+
+# 3. Once the interaction is present, is the treatment main effect needed?
+lrt_main_given_interaction <- anova(
+  treat_no_main,
+  treat_full
+)
+
+# 1. Time only vs treatment main effect
+lrt1_chisq <- lrt_treatment_main$Chisq[2]
+lrt1_df <- lrt_treatment_main$Df[2]
+lrt1_p <- lrt_treatment_main$`Pr(>Chisq)`[2]
+
+# 2. No interaction vs full interaction
+lrt2_chisq <- lrt_interaction$Chisq[2]
+lrt2_df <- lrt_interaction$Df[2]
+lrt2_p <- lrt_interaction$`Pr(>Chisq)`[2]
+
+# 3. No treatment main effect vs full interaction
+lrt3_chisq <- lrt_main_given_interaction$Chisq[2]
+lrt3_df <- lrt_main_given_interaction$Df[2]
+lrt3_p <- lrt_main_given_interaction$`Pr(>Chisq)`[2]
+```
+
+## Likelihood Ratio Tests
+
+The likelihood-ratio tests further clarify the role of treatment in the model. First, adding a treatment main effect to the square-root time model significantly improves fit, $\chi^2(1)=7.46,\ p=0.006$. Adding the treatment-by-square-root-time interaction to the no-interaction model produces a substantial improvement in fit, $\chi^2(1)=64.02,\ p<0.001$. Finally, once the treatment-by-time interaction is included, adding the treatment main effect does not significantly improve model fit, $\chi^2(1)=0.20,\ p=0.655$. This supports the more parsimonious model containing square-root time and the treatment-by-time interaction, but no treatment main effect.
+
+```{r observed vs estimated means}
+# Observed means by treatment group and week
+treatment_means <- df %>%
+  group_by(DRUG, WEEK) %>%
+  summarise(
+    observed_mean = mean(IMPS79, na.rm = TRUE),
+    n = sum(!is.na(IMPS79)),
+    .groups = "drop"
+  )
+
+# Refit selected final treatment model with REML
+final_treatment_model <- lmer(
+  IMPS79 ~ sqrt_week + DRUG:sqrt_week +
+    (1 + sqrt_week | ID),
+  data = df,
+  REML = TRUE,
+  na.action = na.omit,
+  control = lmerControl(optimizer = "bobyqa")
+)
+
+# Population-level predicted means at each week
+treatment_predictions <- expand.grid(
+  WEEK = 0:6,
+  DRUG = c(0, 1)
+) %>%
+  mutate(
+    sqrt_week = sqrt(WEEK)
+  )
+
+treatment_predictions$fitted_mean <- predict(
+  final_treatment_model,
+  newdata = treatment_predictions,
+  re.form = NA
+)
+
+# Combine observed and fitted means
+treatment_mean_comparison <- treatment_means %>%
+  left_join(
+    treatment_predictions,
+    by = c("DRUG", "WEEK")
+  ) %>%
+  mutate(
+    Group = ifelse(DRUG == 0, "Placebo", "Treatment")
+  )
+
+treatment_mean_comparison <- treatment_mean_comparison %>%
+  mutate(
+    Difference = observed_mean - fitted_mean
+  )
+```
+
+```{r observed-estimated-tables, results='asis'}
+placebo_table <- treatment_mean_comparison %>%
+  filter(DRUG == 0) %>%
+  select(WEEK, observed_mean, fitted_mean, Difference, n)
+
+treatment_table <- treatment_mean_comparison %>%
+  filter(DRUG == 1) %>%
+  select(WEEK, observed_mean, fitted_mean, Difference, n)
+
+cat("\\begin{center}\n")
+
+# Placebo table
+cat("\\begin{minipage}[t]{0.48\\textwidth}\n")
+cat("\\centering\n")
+cat("\\scriptsize\n")
+cat("\\captionof{table}{Observed vs. Fitted Means: Placebo}\n")
+
+cat(
+  kable(
+    placebo_table,
+    format = "latex",
+    booktabs = TRUE,
+    digits = c(0, 2, 2, 2, 0),
+    row.names = FALSE,
+    col.names = c(
+      "Week",
+      "Observed",
+      "Fitted",
+      "Difference",
+      "n"
+    )
+  )
+)
+
+cat("\n\\end{minipage}\n")
+cat("\\hfill\n")
+
+# Treatment table
+cat("\\begin{minipage}[t]{0.48\\textwidth}\n")
+cat("\\centering\n")
+cat("\\scriptsize\n")
+cat("\\captionof{table}{Observed vs. Fitted Means: Treatment}\n")
+
+cat(
+  kable(
+    treatment_table,
+    format = "latex",
+    booktabs = TRUE,
+    digits = c(0, 2, 2, 2, 0),
+    row.names = FALSE,
+    col.names = c(
+      "Week",
+      "Observed",
+      "Fitted",
+      "Difference",
+      "n"
+    )
+  )
+)
+
+cat("\n\\end{minipage}\n")
+
+cat("\\end{center}\n")
+```
+
+The fitted means generally follow the observed treatment-specific patterns over time. The treatment and placebo groups begin at similar IMPS79 levels, consistent with the lack of evidence for a treatment main effect at baseline. After baseline, however, the treatment group declines more rapidly than the placebo group, consistent with the significant treatment-by-square-root-time interaction in the final model. 
+
+Thus, the final treatment model is
+
+$$
+Y_{ij} = b_{0i} + b_{1i}\sqrt{\text{Week}_{ij}} + \beta_3\left(\text{Drug}_i\sqrt{\text{Week}_{ij}}\right) + \epsilon_{ij}, \qquad b_{0i}=\beta_0+u_{0i}, \quad b_{1i}=\beta_1+u_{1i}.
+$$
+
+
+```{r treatment-plot-data, include=FALSE}
+# Smooth population-level fitted curves
+treatment_plot_predictions <- expand.grid(
+  WEEK = seq(0, 6, by = 0.05),
+  DRUG = c(0, 1)
+) %>%
+  mutate(
+    sqrt_week = sqrt(WEEK),
+    Group = ifelse(DRUG == 0, "Placebo", "Treatment")
+  )
+
+treatment_plot_predictions$fitted_mean <- predict(
+  final_treatment_model,
+  newdata = treatment_plot_predictions,
+  re.form = NA
+)
+
+# Add group labels to observed means
+treatment_plot_observed <- treatment_means %>%
+  mutate(
+    Group = ifelse(DRUG == 0, "Placebo", "Treatment")
+  )
+```
+
+```{r treatment-observed-fitted-plot, fig.width=7, fig.height=4.5, out.width='82%', fig.align='center'}
+
+# Weeks with very small sample sizes
+low_n_weeks <- data.frame(
+  xmin = c(1.75, 3.75, 4.75),
+  xmax = c(2.25, 4.25, 5.25)
+)
+
+ggplot() +
+
+  # Shade sparsely observed weeks
+  geom_rect(
+    data = low_n_weeks,
+    aes(
+      xmin = xmin,
+      xmax = xmax,
+      ymin = -Inf,
+      ymax = Inf
+    ),
+    inherit.aes = FALSE,
+    fill = "grey70",
+    alpha = 0.12
+  ) +
+
+  # Observed means: dashed lines
+  geom_line(
+    data = treatment_plot_observed,
+    aes(
+      x = WEEK,
+      y = observed_mean,
+      color = Group,
+      group = Group
+    ),
+    linetype = "dashed",
+    linewidth = 0.7,
+    alpha = 0.65
+  ) +
+
+  # Observed means: point size reflects sample size
+  geom_point(
+    data = treatment_plot_observed,
+    aes(
+      x = WEEK,
+      y = observed_mean,
+      color = Group,
+      shape = Group,
+      size = n
+    )
+  ) +
+
+  # Model-estimated trajectories
+  geom_line(
+    data = treatment_plot_predictions,
+    aes(
+      x = WEEK,
+      y = fitted_mean,
+      color = Group
+    ),
+    linewidth = 1.2
+  ) +
+
+  scale_color_manual(
+    values = c(
+      "Placebo" = "firebrick",
+      "Treatment" = "steelblue"
+    )
+  ) +
+
+  scale_size_continuous(
+  range = c(1.5, 4),
+  trans = "sqrt",
+  guide = "none"
+) + 
+
+  annotate(
+    "text",
+    x = c(2, 4, 5),
+    y = 5.95,
+    label = "Low n",
+    size = 3,
+    color = "grey35"
+  ) +
+
+  labs(
+    x = "Week",
+    y = "Mean IMPS79",
+    color = "Group",
+    shape = "Group",
+    title = "Observed and Model-Estimated IMPS79 by Treatment Group",
+    subtitle = "Shaded weeks have very small observed sample sizes"
+  ) +
+
+  theme_minimal()
+```
+
+# Conclusion
+
+Overall, IMPS79 scores decrease over the six-week study period, but the change is nonlinear and varies substantially across patients. A mixed-effects model using square-root time with patient-specific random intercepts and slopes provided the best representation of the longitudinal trend. After incorporating treatment, the preferred model included a treatment-by-square-root-time interaction but no separate treatment main effect. The treatment and placebo groups therefore begin at similar expected symptom levels, but patients receiving antipsychotic medication show a substantially faster decline in IMPS79 over time. 
