@@ -1,0 +1,612 @@
+---
+title: "Assignment 3"
+author: "Felix Liu"
+
+output:
+  pdf_document:
+    latex_engine: xelatex
+
+colorlinks: true
+linkcolor: blue
+urlcolor: blue
+citecolor: blue
+
+knit: (function(inputFile, encoding) { out <- rmarkdown::render(inputFile, encoding = encoding); dest_dir <- file.path(dirname(inputFile), "..", "output"); dir.create(dest_dir, showWarnings = FALSE, recursive = TRUE); dest <- file.path(dest_dir, basename(out)); file.copy(out, dest, overwrite = TRUE); unlink(out); normalizePath(dest, winslash = "/") })
+
+header-includes:
+  - \usepackage{amsmath}
+  - \usepackage{amssymb}
+  - \usepackage{booktabs}
+  - \usepackage{caption}
+  - \usepackage{float}
+  - \usepackage{placeins}
+  - \usepackage{titling}
+  - \setlength{\droptitle}{-1.5cm}
+---
+
+```{r initialize, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+
+library(dplyr)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+library(lme4)
+library(lmerTest)
+library(tidyr)
+library(meta)
+
+# Work around TinyTeX same-file copy issue on Windows
+latex_tmp <- normalizePath(
+  tempdir(),
+  winslash = "/",
+  mustWork = TRUE
+)
+
+options(
+  tinytex.output_dir = latex_tmp,
+  tinytex.engine_args = shQuote(
+    paste0("--output-directory=", latex_tmp)
+  )
+)
+```
+
+```{r clean-data}
+df <- read.csv("../data/data-1.csv")
+names(df) <- trimws(names(df))
+
+format_p <- function(p) {
+  ifelse(p < 0.001, "$<0.001$", sprintf("%.3f", p))
+}
+```
+
+# Fixed-Effect and Random-Effects Meta-Analysis
+
+The data comes from the FDA meta-analysis of pediatric antidepressant randomized clinical trials. There are 24 studies comparing antidepressant treatment with placebo, with the outcome being the number of suicide-related events, including both thoughts and behaviors. The risk ratio (RR) here is defined as 
+
+$$
+  \text{RR} = \frac{\mathbb{P}\left(\text{suicidal event}|\text{drug}\right)}{\mathbb{P}\left(\text{suicidal event} | \text{placebo}\right)},
+$$
+with the ``crude" / unadjusted risk ratio being $\approx 1.94$, with a risk ratio greater than 1 suggesting a higher risk under antidepressant treatment. I fit a fixed-effect model using the Mantel-Haenszel estimator and a random-effects model using the DerSimonian-Laird moment estimator of between-study variance.
+
+```{r reshape-data, include=FALSE}
+# Each study has one row for antidepressant treatment and one for placebo.
+# Combine the treatment arms so each study occupies one row.
+study_data <- df %>%
+  select(Antidepressant, Trial, Studyid, Treatment, N, Events) %>%
+  pivot_wider(
+    names_from = Treatment,
+    values_from = c(N, Events)
+  ) %>%
+  arrange(Studyid) %>%
+  mutate(
+    Study = paste0(Antidepressant, " (", Trial, ")")
+  )
+```
+
+## Model Estimates
+
+Under the fixed-effect model, we assume that the studies share one true treatment effect, with the observed differences between studies arising from sampling variation. The Mantel-Haenszel method then combines the study-specific information to estimate this common risk ratio.
+
+The random-effects model instead allows the true treatment effect to differ between studies. The DerSimonian-Laird method uses a moment-based estimate of the between-study variance, $\tau^2$, and combines the study estimates while accounting for this extra source of variation. 
+
+```{r meta-analysis, include=FALSE}
+meta_fit <- meta::metabin(
+  event.e = Events_Drug,
+  n.e = N_Drug,
+  event.c = Events_Placebo,
+  n.c = N_Placebo,
+  studlab = Study,
+  data = study_data,
+  sm = "RR",
+  method = "MH",
+  common = TRUE,
+  random = TRUE,
+  method.tau = "DL",
+  method.random.ci = "classic",
+  # Add 0.5 only to studies with a zero-event treatment arm.
+  # Double-zero studies do not contribute to the risk-ratio estimate.
+  incr = 0.5,
+  method.incr = "only0",
+  allstudies = FALSE,
+  MH.exact = FALSE,
+  Q.Cochrane = TRUE
+)
+
+model_results <- data.frame(
+  Model = c("Fixed effect (Mantel-Haenszel)",
+            "Random effects (DerSimonian-Laird)"),
+  RR = exp(c(meta_fit$TE.common, meta_fit$TE.random)),
+  Lower = exp(c(meta_fit$lower.common, meta_fit$lower.random)),
+  Upper = exp(c(meta_fit$upper.common, meta_fit$upper.random)),
+  P = c(meta_fit$pval.common, meta_fit$pval.random)
+) %>%
+  mutate(
+    CI = sprintf("(%.2f, %.2f)", Lower, Upper),
+    RR = sprintf("%.2f", RR),
+    P = format_p(P)
+  ) %>%
+  select(Model, RR, CI, P)
+```
+
+```{r model-results-table, results='asis'}
+model_results %>%
+  kable(
+    format = "latex",
+    booktabs = TRUE,
+    escape = FALSE,
+    align = c("l", "c", "c", "c"),
+    col.names = c("Model", "Risk Ratio", "95\\% CI", "$p$-value"),
+    caption = "Pooled Treatment Effects from the Two Meta-Analysis Models"
+  ) %>%
+  kable_styling(
+    latex_options = c("hold_position", "striped"),
+    position = "center",
+    font_size = 10
+  )
+```
+
+Both models suggest a higher risk of suicide-related events for patients receiving antidepressants compared with placebo. Under the fixed-effect model, the estimated risk ratio is `r sprintf("%.2f", exp(meta_fit$TE.common))` (95% CI: `r sprintf("%.2f", exp(meta_fit$lower.common))` to `r sprintf("%.2f", exp(meta_fit$upper.common))`). Under the random-effects model, the estimated risk ratio is `r sprintf("%.2f", exp(meta_fit$TE.random))` (95% CI: `r sprintf("%.2f", exp(meta_fit$lower.random))` to `r sprintf("%.2f", exp(meta_fit$upper.random))`). Both confidence intervals exclude 1, suggesting that the risk of suicide-related events was higher for patients assigned to antidepressants in these trials. 
+
+## Heterogeneity and Model Choice
+
+To assess whether the treatment effects differ across studies beyond what we would expect from sampling variation,we use Cochran's $Q$ test. The null hypothesis of the $Q$ test is that the studies have a common true treatment effect, ie $\tau^2 = 0$. The test statistic is 
+
+$$
+  Q = \sum_{i=1}^k\omega_i(y_i - \bar{y}_\omega)^2,
+$$
+where $y_i$ is the estimated log risk ratio for study $i$, and $\omega_i$ is the weight assigned to study $i$. With 20 studies that contain nonzero suicidal events in both drug and palcebo groups, we have 19 degrees of freedom for this Q test. 
+
+The heterogeneity test gives $Q(`r meta_fit$df.Q`) = `r sprintf("%.2f", meta_fit$Q)`$, with $p = `r sprintf("%.3f", meta_fit$pval.Q)`$. Thus, the data do not provide statistically significant evidence of between-study heterogeneity.
+
+However, one important limitation is that the outcome is very rare. Bhaumik et al. (2012) show that moment-based estimates of treatment effects and heterogeneity can be biased in sparse binary data, and standard heterogeneity tests may fail to detect variation that actually exists. In this case, a nonsignificant $Q$ test is therefore not especially strong evidence that the true effects are identical across studies.
+
+If the common-effect assumption were justified, the Mantel--Haenszel estimate would be a reasonable summary of these trials. A random-effects model is also scientifically plausible because the studies involve different antidepressants. However, the DerSimonian--Laird estimate of $\tau^2$ has its own limitations with rare events. Therefore, neither model is definitively correct. Rather, the two models together as a useful comparison rather than choosing a model solely from the heterogeneity test. 
+
+## Forest Plot
+
+```{r forest-plot, fig.width=9.5, fig.height=8, out.width='100%', fig.align='center', fig.cap='Forest plot of risk ratios for suicide-related events in antidepressant versus placebo groups.'}
+meta::forest(
+  meta_fit,
+  backtransf = TRUE,
+  xlab = "Risk ratio (antidepressant / placebo)",
+  smlab = "",
+  leftcols = c("studlab", "event.e", "n.e", "event.c", "n.c"),
+  leftlabs = c("Study", "Events", "N", "Events", "N"),
+  rightcols = c("effect", "ci", "w.common", "w.random"),
+  rightlabs = c("RR", "95% CI", "MH weight", "DL weight"),
+  label.left = "Lower risk with drug",
+  label.right = "Higher risk with drug",
+  print.tau2 = TRUE,
+  print.I2 = TRUE,
+  print.pval.Q = TRUE,
+  col.square = "steelblue",
+  col.diamond = "firebrick",
+  col.diamond.lines = "firebrick",
+  fontsize = 8
+)
+```
+
+The forest plot shows that many individual trials have wide confidence intervals, reflecting the small number of suicide-related events in each study. For studies with a zero-event cell in only one arm, a 0.5 continuity correction was used to obtain finite estimates. 
+
+# Likelihood-Based Random-Effects Meta-Analysis
+Since each observation is an event count out of a known number of patients, binomial mixed-effects logistic regression is an appropriate model for this analysis. There are 24 trials, each with a drug arm and a placebo arm. Let *study* be the grouping variable and let `Tx = 1` indicate treatment and `Tx = 0` indicate placebo.
+
+```{r part2-data, include=FALSE}
+# Keep the data in long format: one row per study and treatment arm.
+# Each response is the number of events out of N patients.
+part2_data <- df %>%
+  mutate(
+    Studyid = factor(Studyid),
+    Tx = as.numeric(Tx),
+    NoEvents = N - Events
+  ) %>%
+  arrange(Studyid, Tx)
+
+stopifnot(
+  nrow(part2_data) == 48,
+  nlevels(part2_data$Studyid) == 24,
+  all(part2_data$Events >= 0),
+  all(part2_data$NoEvents >= 0)
+)
+
+# The same fitting settings are used in all AIC comparisons.
+model_control <- glmerControl(
+  optimizer = "bobyqa",
+  optCtrl = list(maxfun = 200000)
+)
+
+fit_binomial <- function(model_formula, nAGQ = 1) {
+  tryCatch(
+    glmer(
+      model_formula,
+      data = part2_data,
+      family = binomial(link = "logit"),
+      nAGQ = nAGQ,
+      control = model_control
+    ),
+    error = function(e) NULL
+  )
+}
+```
+
+Four random-effects structures were considered: a random study intercept, a random treatment slope, both effects assumed independent, and both effects allowed to be correlated. For the full model, let $Y_{ij}$ be the number of suicide-related events in study $i$ and treatment $j$, with $n_{ij}$ patients in each treatment. The model is
+
+$$
+Y_{ij}\mid b_{0i},b_{1i}\sim\operatorname{Binomial}(n_{ij},p_{ij}),
+\qquad
+\operatorname{logit}(p_{ij})
+=\beta_0+\beta_1\mathrm{Tx}_{ij}+b_{0i}+b_{1i}\mathrm{Tx}_{ij}.
+$$
+
+Here, $\beta_0$ is the average placebo log odds for a study with random effects equal to zero, and $\beta_1$ is the average treatment effect on the log-odds scale. The random intercept $b_{0i}$ and random treatment slope $b_{1i}$ represent study-specific departures from those values. The different candidate models are obtained by including or excluding these random terms and their covariance.
+
+## Model Comparison
+
+```{r part2-fit-models, include=FALSE}
+# A fixed-only model is included as a baseline comparison.
+model_fixed <- glm(
+  cbind(Events, NoEvents) ~ Tx,
+  data = part2_data,
+  family = binomial(link = "logit")
+)
+
+# nAGQ = 1 uses the Laplace approximation for consistent AIC comparisons.
+model_intercept <- fit_binomial(
+  cbind(Events, NoEvents) ~ Tx + (1 | Studyid)
+)
+model_slope <- fit_binomial(
+  cbind(Events, NoEvents) ~ Tx + (0 + Tx | Studyid)
+)
+model_independent <- fit_binomial(
+  cbind(Events, NoEvents) ~ Tx + (1 | Studyid) + (0 + Tx | Studyid)
+)
+model_correlated <- fit_binomial(
+  cbind(Events, NoEvents) ~ Tx + (1 + Tx | Studyid)
+)
+
+candidate_models <- list(
+  "No random effect" = model_fixed,
+  "Random intercept" = model_intercept,
+  "Random slope only" = model_slope,
+  "Intercept + slope (independent)" = model_independent,
+  "Intercept + slope (correlated)" = model_correlated
+)
+
+# Omit only models that failed to fit. Their failure is reported separately.
+fit_failed <- names(candidate_models)[vapply(candidate_models, is.null, logical(1))]
+candidate_models <- Filter(Negate(is.null), candidate_models)
+
+model_compare <- data.frame(
+  Model = names(candidate_models),
+  Parameters = vapply(candidate_models, function(m) attr(logLik(m), "df"), numeric(1)),
+  LogLik = vapply(candidate_models, function(m) as.numeric(logLik(m)), numeric(1)),
+  AIC = vapply(candidate_models, AIC, numeric(1)),
+  row.names = NULL
+) %>%
+  arrange(AIC)
+
+best_model_name <- model_compare$Model[1]
+
+# Check whether the flexible models have variance/correlation estimates
+# at the boundary of the parameter space.
+model_singularity <- vapply(
+  candidate_models,
+  function(m) if (inherits(m, "merMod")) isSingular(m) else FALSE,
+  logical(1)
+)
+```
+
+```{r part2-model-table, results='asis'}
+model_compare %>%
+  mutate(
+    LogLik = sprintf("%.2f", LogLik),
+    AIC = sprintf("%.2f", AIC)
+  ) %>%
+  kable(
+    format = "latex",
+    booktabs = TRUE,
+    align = c("l", "c", "r", "r"),
+    col.names = c("Model", "Parameters", "Log Likelihood", "AIC"),
+    escape = FALSE,
+    caption = "Comparison of Binomial Models with Different Random-Effects Structures"
+  ) %>%
+  kable_styling(
+    latex_options = c("hold_position", "striped"),
+    position = "center",
+    font_size = 9
+  )
+```
+
+The selected model is
+
+$$
+\begin{aligned}
+Y_{ij}\mid b_{0i} &\sim \operatorname{Binomial}(n_{ij},p_{ij}),\\
+\operatorname{logit}(p_{ij}) &= \beta_0+\beta_1\mathrm{Tx}_{ij}+b_{0i},\\
+b_{0i}&\sim N(0,\sigma_b^2).
+\end{aligned}
+$$
+
+```{r part2-final-model, include=FALSE}
+# Fit the chosen model more accurately using adaptive Gauss-Hermite quadrature.
+selected_model <- fit_binomial(
+  cbind(Events, NoEvents) ~ Tx + (1 | Studyid),
+  nAGQ = 15
+)
+if (is.null(selected_model)) selected_model <- model_intercept
+if (is.null(selected_model)) stop("The random-intercept model could not be fitted.")
+
+coef_table <- coef(summary(selected_model))
+int_est <- unname(fixef(selected_model)["(Intercept)"])
+tx_est <- unname(fixef(selected_model)["Tx"])
+tx_se <- coef_table["Tx", "Std. Error"]
+tx_p <- coef_table["Tx", "Pr(>|z|)"]
+int_p <- coef_table["(Intercept)", "Pr(>|z|)"]
+
+random_sd <- as.data.frame(VarCorr(selected_model))$sdcor[1]
+random_var <- random_sd^2
+odds_ratio <- exp(tx_est)
+odds_lower <- exp(tx_est - 1.96 * tx_se)
+odds_upper <- exp(tx_est + 1.96 * tx_se)
+
+parameter_results <- data.frame(
+  Parameter = c("Intercept ($\\beta_0$)", "Treatment ($\\beta_1$)", "Study intercept SD ($\\sigma_b$)"),
+  Estimate = c(int_est, tx_est, random_sd),
+  SE = c(coef_table["(Intercept)", "Std. Error"], tx_se, NA_real_),
+  P = c(int_p, tx_p, NA_real_)
+) %>%
+  mutate(
+    Estimate = sprintf("%.3f", Estimate),
+    SE = ifelse(is.na(SE), "--", sprintf("%.3f", SE)),
+    P = ifelse(is.na(P), "--", format_p(P))
+  )
+```
+
+```{r part2-coef-table, results='asis'}
+parameter_results %>%
+  kable(
+    format = "latex",
+    booktabs = TRUE,
+    escape = FALSE,
+    align = c("l", "c", "c", "c"),
+    col.names = c("Parameter", "Estimate", "SE", "$p$-value"),
+    caption = "Estimated Parameters for the Random-Intercept Binomial Model"
+  ) %>%
+  kable_styling(
+    latex_options = c("hold_position", "striped"),
+    position = "center",
+    font_size = 10
+  )
+```
+
+The intercept, $\hat\beta_0 = `r sprintf("%.3f", int_est)`$, is the estimated log odds of a suicide-related event for a placebo patient in a study whose random intercept is zero. This is significantly below zero ($p$ `r if (int_p < 0.001) "$<0.001$" else paste0("= ", sprintf("%.3f", int_p))`), which is consistent with the low observed event rate. More importantly, the treatment coefficient is $\hat\beta_1 = `r sprintf("%.3f", tx_est)`$ ($p$ `r if (tx_p < 0.001) "$<0.001$" else paste0("= ", sprintf("%.3f", tx_p))`). Holding the study-specific intercept constant, antidepressant treatment increases the estimated log odds of an event by this amount.
+
+Exponentiating the treatment coefficient gives an odds ratio of `r sprintf("%.2f", odds_ratio)`, with an approximate 95\% Wald confidence interval of (`r sprintf("%.2f", odds_lower)`, `r sprintf("%.2f", odds_upper)`). `r if (tx_p < 0.05) "Since the interval excludes 1, there is statistically significant evidence of a treatment effect in this model." else "Since the interval includes 1, the estimated treatment effect is not statistically significant at the 5% level in this model."`
+
+## Estimated Probabilities of a Suicide-Related Event
+
+For a study with random intercept $b_{0i}=0$,
+
+$$
+\begin{aligned}
+\text{Placebo log odds} &= \hat\beta_0,\\
+\text{Drug log odds} &= \hat\beta_0+\hat\beta_1.
+\end{aligned}
+$$
+
+If $\eta$ denotes the log odds, the corresponding odds are $e^\eta$, and the event probability is
+
+$$
+p=\frac{e^\eta}{1+e^\eta}.
+$$
+
+```{r part2-probability-table, results='asis'}
+prob_results <- data.frame(
+  Group = c("Placebo", "Antidepressant"),
+  LogOdds = c(int_est, int_est + tx_est)
+) %>%
+  mutate(
+    Odds = exp(LogOdds),
+    Probability = plogis(LogOdds),
+    LogOdds = sprintf("%.3f", LogOdds),
+    Odds = sprintf("%.4f", Odds),
+    Probability = sprintf("%.2f\\%%", 100 * Probability)
+  )
+
+prob_results %>%
+  kable(
+    format = "latex",
+    booktabs = TRUE,
+    escape = FALSE,
+    align = c("l", "c", "c", "c"),
+    col.names = c("Group", "Log Odds", "Odds", "Probability"),
+    caption = "Estimated Event Probabilities for a Study with Random Intercept Zero"
+  ) %>%
+  kable_styling(
+    latex_options = c("hold_position", "striped"),
+    position = "center",
+    font_size = 10
+  )
+```
+
+The estimated event probability is **`r sprintf("%.2f", 100 * plogis(int_est))`\%** for placebo and **`r sprintf("%.2f", 100 * plogis(int_est + tx_est))`\%** for antidepressant treatment, when the study random intercept is zero. 
+
+## AI Comparison
+**Prompt**: *Here is the course textbook, related papers on meta-analysis, prompt, and dataset. Do problem 2, ie fit different forms of logistic mixed models, compare AIC and convergence, and interpret the fitted log odds, odds ratios, and event probabilities in the case where b_{0i} = b_{1i} = 0 (if applicable)*
+
+In addition to comparing different random-effects structures, the AI also considered both logistic and probit mixed-effect models. The results were as follows: 
+
+```{r part2-ai-link-table, results='asis'}
+# AI estimates from the separate numerical analysis; R logit values
+# are taken directly from the fitted random-intercept model.
+ai_link_comparison <- data.frame(
+  Quantity = c(
+    "Intercept",
+    "Treatment coefficient",
+    "Study intercept SD",
+    "Treatment p-value",
+    "Placebo probability",
+    "Drug probability",
+    "AIC"
+  ),
+  R_Logit = c(
+    sprintf("%.3f", int_est),
+    sprintf("%.3f", tx_est),
+    sprintf("%.3f", random_sd),
+    ifelse(tx_p < 0.001, "$<0.001$", sprintf("%.3f", tx_p)),
+    sprintf("%.2f\\%%", 100 * plogis(int_est)),
+    sprintf("%.2f\\%%", 100 * plogis(int_est + tx_est)),
+    sprintf("%.2f", AIC(model_intercept))
+  ),
+  AI_Probit = c("-2.370", "0.300", "0.325", "0.002", "0.89\\%", "1.92\\%", "161.69"),
+  check.names = FALSE
+)
+
+ai_link_comparison %>%
+  kable(
+    format = "latex",
+    booktabs = TRUE,
+    escape = FALSE,
+    align = c("l", "c", "c"),
+    col.names = c("Quantity", "logit", "probit"),
+    caption = "Comparison of Logistic and Probit Results"
+  ) %>%
+  kable_styling(
+    latex_options = c("hold_position", "striped"),
+    position = "center",
+    font_size = 9
+  )
+```
+
+The probit coefficients are on a different scale from the logit coefficients, so their numerical sizes should not be compared directly. However, both link functions give very similar event probabilities, and both find the existence of a treatment effect. Furthermore, their AIC values are extremely similar to one another as well.
+
+\clearpage
+
+# Marginal Versus Unit-Specific Probabilities
+
+Recall the random-intercept binomial logistic model:
+
+$$
+\begin{aligned}
+Y_{ij}\mid b_{0i} &\sim \operatorname{Binomial}(n_{ij},p_{ij}),\\
+\operatorname{logit}(p_{ij}) &= \beta_0+\beta_1\mathrm{Tx}_{ij}+b_{0i},\\
+b_{0i}&\sim N(0,\sigma_b^2).
+\end{aligned}
+$$
+
+```{r part3-fit-model, include=FALSE}
+# Standalone Part 3: fit the same random-intercept model used in Part 2.
+part3_data <- df %>%
+  mutate(
+    Studyid = factor(Studyid),
+    Tx = as.numeric(Tx),
+    NoEvents = N - Events
+  )
+
+stopifnot(
+  nrow(part3_data) == 48,
+  nlevels(part3_data$Studyid) == 24,
+  all(part3_data$Events >= 0),
+  all(part3_data$NoEvents >= 0)
+)
+
+model_part3 <- glmer(
+  cbind(Events, NoEvents) ~ Tx + (1 | Studyid),
+  data = part3_data,
+  family = binomial(link = "logit"),
+  nAGQ = 15,
+  control = glmerControl(
+    optimizer = "bobyqa",
+    optCtrl = list(maxfun = 200000)
+  )
+)
+
+beta0_part3 <- unname(fixef(model_part3)["(Intercept)"])
+beta1_part3 <- unname(fixef(model_part3)["Tx"])
+sigma2_part3 <- as.data.frame(VarCorr(model_part3))$vcov[1]
+sigma_part3 <- sqrt(sigma2_part3)
+```
+
+## Unit-Specific Probabilities
+
+Recall the probabilities for a study with its random intercept set to zero, $b_{0i}=0$. The estimated placebo and drug probabilities are
+
+$$
+\widehat p_{\mathrm{SS},0}=\frac{e^{\hat\beta_0}}{1+e^{\hat\beta_0}}, \qquad
+\widehat p_{\mathrm{SS},1}=\frac{e^{\hat\beta_0+\hat\beta_1}}{1+e^{\hat\beta_0+\hat\beta_1}}.
+$$
+
+## Marginal Probabilities Using the Design Effect
+
+We divide the fixed-effect linear predictor by
+
+$$
+D=\sqrt{1+k^2\hat\sigma_b^2},
+\qquad k=\frac{16\sqrt{3}}{15\pi}.
+$$
+
+The estimated marginal probabilities can then be approximated by
+
+$$
+\widehat p_{\mathrm{M},0}\approx
+\operatorname{logit}^{-1}\left(\frac{\hat\beta_0}{D}\right), \qquad
+\widehat p_{\mathrm{M},1}\approx
+\operatorname{logit}^{-1}\left(\frac{\hat\beta_0+\hat\beta_1}{D}\right).
+$$
+
+```{r part3-calculate, include=FALSE}
+# Design-effect attenuation factor from Hedeker and Gibbons.
+k_part3 <- 16 * sqrt(3) / (15 * pi)
+design_part3 <- sqrt(1 + k_part3^2 * sigma2_part3)
+
+tx_part3 <- c(0, 1)
+eta_part3 <- beta0_part3 + beta1_part3 * tx_part3
+p_specific_part3 <- plogis(eta_part3)
+p_marginal_part3 <- plogis(eta_part3 / design_part3)
+diff_pp_part3 <- 100 * (p_marginal_part3 - p_specific_part3)
+
+part3_results <- data.frame(
+  Group = c("Placebo", "Antidepressant"),
+  Specific = sprintf("%.2f\\%%", 100 * p_specific_part3),
+  Marginal = sprintf("%.2f\\%%", 100 * p_marginal_part3)
+)
+
+or_specific_part3 <- exp(beta1_part3)
+or_marginal_part3 <- exp(beta1_part3 / design_part3)
+```
+
+From the fitted model, $\hat\beta_0=`r sprintf("%.3f", beta0_part3)`$, $\hat\beta_1=`r sprintf("%.3f", beta1_part3)`$, and $\hat\sigma_b=`r sprintf("%.3f", sigma_part3)`$. Then, $D=`r sprintf("%.3f", design_part3)`$.
+
+```{r part3-results-table, results='asis'}
+part3_results %>%
+  kable(
+    format = "latex",
+    booktabs = TRUE,
+    escape = FALSE,
+    align = c("l", "c", "c"),
+    col.names = c("Group", "Unit-Specific", "Marginal (Approx.)"),
+    caption = "Unit-Specific and Marginal Probabilities of Suicide-Related Events"
+  ) %>%
+  kable_styling(
+    latex_options = c("hold_position", "striped"),
+    position = "center",
+    font_size = 10
+  )
+```
+
+## Comparison and Interpretation
+
+For placebo, the estimated probability increases from `r sprintf("%.2f", 100 * p_specific_part3[1])`\% in a study with random intercept zero to an approximate marginal probability of `r sprintf("%.2f", 100 * p_marginal_part3[1])`\%. For antidepressant treatment, it increases from `r sprintf("%.2f", 100 * p_specific_part3[2])`\% to `r sprintf("%.2f", 100 * p_marginal_part3[2])`\%.
+
+Conceptually, the unit-specific estimates hold the study random effect fixed, whereas the marginal estimates account for the distribution of baseline risks across all studies. Because the logistic transformation is nonlinear, averaging the probabilities is not the same as setting the random intercept to its mean of zero. This produces higher estimated marginal event probabilities for both groups. The treatment effect is also smaller on the marginal log-odds scale: the conditional odds ratio is $e^{\hat\beta_1}=`r sprintf("%.2f", or_specific_part3)`$, compared with an approximate marginal odds ratio of $e^{\hat\beta_1/D}=`r sprintf("%.2f", or_marginal_part3)`$. This does not mean that averaging across studies removes the treatment effect. 
+
+\clearpage
+
+# References
+
+Bhaumik, D. K., Amatya, A., Normand, S.-L. T., Greenhouse, J., Kaizar, E., Neelon, B., & Gibbons, R. D. (2012). Meta-analysis of rare binary adverse event data. *Journal of the American Statistical Association, 107*(498), 555--567.
