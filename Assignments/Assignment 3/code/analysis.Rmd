@@ -154,12 +154,12 @@ Both models suggest a higher risk of suicide-related events for patients receivi
 
 ## Heterogeneity and Model Choice
 
-To assess whether the treatment effects differ across studies beyond what we would expect from sampling variation,we use Cochran's $Q$ test. The null hypothesis of the $Q$ test is that the studies have a common true treatment effect, ie $\tau^2 = 0$. The test statistic is 
+To assess whether the treatment effects differ across studies beyond what we would expect from sampling variation, we use Cochran's $Q$ test. The null hypothesis of the $Q$ test is that the studies have a common true treatment effect, ie $\tau^2 = 0$. The test statistic is 
 
 $$
   Q = \sum_{i=1}^k\omega_i(y_i - \bar{y}_\omega)^2,
 $$
-where $y_i$ is the estimated log risk ratio for study $i$, and $\omega_i$ is the weight assigned to study $i$. With 20 studies that contain nonzero suicidal events in both drug and palcebo groups, we have 19 degrees of freedom for this Q test. 
+where $y_i$ is the estimated log risk ratio for study $i$, and $\omega_i$ is the weight assigned to study $i$. With 20 studies that contain nonzero suicidal events in both drug and placebo groups, we have 19 degrees of freedom for this Q test. 
 
 The heterogeneity test gives $Q(`r meta_fit$df.Q`) = `r sprintf("%.2f", meta_fit$Q)`$, with $p = `r sprintf("%.3f", meta_fit$pval.Q)`$. Thus, the data do not provide statistically significant evidence of between-study heterogeneity.
 
@@ -610,3 +610,9 @@ Conceptually, the unit-specific estimates hold the study random effect fixed, wh
 # References
 
 Bhaumik, D. K., Amatya, A., Normand, S.-L. T., Greenhouse, J., Kaizar, E., Neelon, B., & Gibbons, R. D. (2012). Meta-analysis of rare binary adverse event data. *Journal of the American Statistical Association, 107*(498), 555--567.
+
+# Code
+
+The complete R code used for this analysis can be found here:
+
+[GitHub Repository](https://github.com/FelixYLiu/STAT-35800-Statistical-Applications/blob/main/Assignments/Assignment%203/code/analysis.Rmd)
